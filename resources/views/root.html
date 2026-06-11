@@ -1,0 +1,30 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Telegram Sender</title>
+    {{ range css "resources/js/app.tsx" }}
+        <link rel="stylesheet" href="{{ . }}">
+    {{ end }}
+
+    {{ if isRunningHot }}
+<script type="module">
+    import RefreshRuntime from '{{ viteDevUrl "@react-refresh" }}'
+    RefreshRuntime.injectIntoGlobalHook(window)
+    window.$RefreshReg$ = () => {}
+    window.$RefreshSig$ = () => (type) => type
+    window.__vite_plugin_react_preamble_installed__ = true
+</script>
+{{ end }}
+</head>
+<body>
+    {{ if not .ssr }}
+    <script data-page="app" type="application/json">{{ marshal .page }}</script>
+    <div id="app"></div>
+    {{ else }}
+    {{ raw .ssr.Body }}
+    {{ end }}
+   <script type="module" src="{{ asset "resources/js/app.tsx" }}"></script>
+</body>
+</html>

@@ -1,0 +1,1 @@
+{"root":["./resources/js/app.tsx","./resources/js/vite-env.d.ts","./resources/js/Layouts/AppLayout.tsx","./resources/js/Pages/Auth/Login.tsx","./resources/js/Pages/Devices/Form.tsx","./resources/js/Pages/Devices/Index.tsx","./resources/js/Pages/Devices/Session.tsx","./resources/js/Pages/Logs/Index.tsx"],"version":"5.9.3"}
