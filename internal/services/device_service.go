@@ -1,6 +1,7 @@
 package services
 
 import (
+	"github.com/google/uuid"
 	"github.com/tiar/telegram-sender/internal/models"
 	"gorm.io/gorm"
 )
@@ -39,6 +40,7 @@ func (s *DeviceService) Create(name, phone string) (*models.Device, error) {
 		Name:   name,
 		Phone:  phone,
 		Status: models.DeviceStatusNoSession,
+		ApiKey: uuid.NewString(),
 	}
 	if err := s.db.Create(&device).Error; err != nil {
 		return nil, err
@@ -97,4 +99,34 @@ func (s *DeviceService) ClearSession(id uint) error {
 		"telegram_phone":      "",
 		"status":              models.DeviceStatusNoSession,
 	}).Error
+}
+
+// EnsureAPIKey memastikan device punya api_key, generate kalau belum ada.
+func (s *DeviceService) EnsureAPIKey(deviceID int64) (string, error) {
+	var key string
+	err := s.db.Raw(`SELECT COALESCE(api_key,'') FROM devices WHERE id=?`, deviceID).Scan(&key).Error
+	if err != nil {
+		return "", err
+	}
+	if key != "" {
+		return key, nil
+	}
+	key = uuid.NewString()
+	db := s.db.Exec(`UPDATE devices SET api_key=? WHERE id=?`, key, deviceID)
+	return key, db.Error
+}
+
+// FindByAPIKey mencari device berdasarkan api_key.
+func (s *DeviceService) FindByAPIKey(apiKey string) (*models.Device, error) {
+	var d models.Device
+
+	err := s.db.
+		Where("api_key = ?", apiKey).
+		First(&d).
+		Error
+
+	if err != nil {
+		return nil, err
+	}
+	return &d, nil
 }

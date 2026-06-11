@@ -1,9 +1,14 @@
 import '../css/app.css';
 import 'antd/dist/reset.css';
-import { createRoot } from 'react-dom/client';
-import { createInertiaApp } from '@inertiajs/react';
+
+import {
+  App as AntdApp,
+  ConfigProvider,
+} from 'antd';
 import { resolvePageComponent } from 'laravel-vite-plugin/inertia-helpers';
-import { ConfigProvider } from 'antd';
+import { createRoot } from 'react-dom/client';
+
+import { createInertiaApp } from '@inertiajs/react';
 
 createInertiaApp({
   resolve: (name) =>
@@ -14,8 +19,11 @@ createInertiaApp({
         theme={{
           token: { colorPrimary: '#1677ff', borderRadius: 6 },
         }}
+
       >
-        <App {...props} />
+        <AntdApp>
+          <App  {...props} />
+        </AntdApp>
       </ConfigProvider>,
     );
   },

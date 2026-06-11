@@ -217,6 +217,7 @@ func deviceJSON(d models.Device) map[string]any {
 	return map[string]any{
 		"id":                d.ID,
 		"name":              d.Name,
+		"apiKey":            d.ApiKey,
 		"phone":             d.Phone,
 		"telegramUserId":    d.TelegramUserID,
 		"telegramFirstName": d.TelegramFirstName,
@@ -283,6 +284,8 @@ func (h *Handlers) DeviceGetProfile(w http.ResponseWriter, r *http.Request) {
 		respondJSON(w, http.StatusBadRequest, map[string]string{"error": "Device belum punya session"})
 		return
 	}
+
+	h.Devices.EnsureAPIKey(int64(id))
 
 	err = h.Telegram.RefreshProfile(r.Context(), id)
 	if err != nil {

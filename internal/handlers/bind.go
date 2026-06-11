@@ -111,3 +111,15 @@ func mapForm(r *http.Request, dst any) error {
 	}
 	return nil
 }
+
+func jsonOK(w http.ResponseWriter, data any) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	json.NewEncoder(w).Encode(map[string]any{"data": data})
+}
+
+func jsonError(w http.ResponseWriter, msg string, code int) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(code)
+	json.NewEncoder(w).Encode(map[string]any{"error": msg})
+}

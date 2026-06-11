@@ -9,8 +9,12 @@ type LogService struct {
 	db *gorm.DB
 }
 
+// 2. Buat variabel global yang diekspos (Diawali huruf kapital)
+var Log *LogService
+
 func NewLogService(db *gorm.DB) *LogService {
-	return &LogService{db: db}
+	Log = &LogService{db: db}
+	return Log
 }
 
 func (s *LogService) Write(level, action, message string, deviceID *uint) {

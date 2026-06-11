@@ -22,7 +22,7 @@ type Handlers struct {
 }
 
 func (h *Handlers) render(w http.ResponseWriter, r *http.Request, page string, props map[string]any) {
-	r = h.withAuth(r)
+
 	if props == nil {
 		props = map[string]any{}
 	}
@@ -34,25 +34,6 @@ func (h *Handlers) render(w http.ResponseWriter, r *http.Request, page string, p
 
 func (h *Handlers) redirect(w http.ResponseWriter, r *http.Request, url string) {
 	h.Inertia.Location(w, r, url)
-}
-
-func (h *Handlers) withAuth(r *http.Request) *http.Request {
-	userID, ok := h.Session.GetUserID(r)
-	if !ok {
-		return r
-	}
-	user, err := h.Users.FindByID(userID)
-	if err != nil {
-		return r
-	}
-	ctx := h.Inertia.WithProp(r.Context(), "auth", map[string]any{
-		"user": map[string]any{
-			"id":       user.ID,
-			"username": user.Username,
-			"name":     user.Name,
-		},
-	})
-	return r.WithContext(ctx)
 }
 
 func parseID(r *http.Request, key string) (uint, bool) {

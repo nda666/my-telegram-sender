@@ -4,11 +4,13 @@ go 1.26.4
 
 require (
 	github.com/go-faster/errors v0.7.1
+	github.com/go-playground/validator/v10 v10.30.3
 	github.com/gorilla/sessions v1.4.0
 	github.com/gotd/contrib v0.21.1
 	github.com/gotd/td v0.147.0
 	github.com/joho/godotenv v1.5.1
 	github.com/petaki/inertia-go v1.15.0
+	github.com/petaki/support-go v1.14.0
 	golang.org/x/crypto v0.52.0
 	golang.org/x/time v0.15.0
 	gorm.io/driver/mysql v1.6.0
@@ -16,10 +18,11 @@ require (
 )
 
 require (
-	filippo.io/edwards25519 v1.1.0 // indirect
+	filippo.io/edwards25519 v1.2.0 // indirect
 	github.com/cenkalti/backoff/v4 v4.3.0 // indirect
 	github.com/cespare/xxhash/v2 v2.3.0 // indirect
 	github.com/coder/websocket v1.8.14 // indirect
+	github.com/davecgh/go-spew v1.1.2-0.20180830191138-d8f796af33cc // indirect
 	github.com/dlclark/regexp2 v1.11.5 // indirect
 	github.com/fatih/color v1.19.0 // indirect
 	github.com/gabriel-vasile/mimetype v1.4.13 // indirect
@@ -29,8 +32,8 @@ require (
 	github.com/go-faster/yaml v0.4.6 // indirect
 	github.com/go-playground/locales v0.14.1 // indirect
 	github.com/go-playground/universal-translator v0.18.1 // indirect
-	github.com/go-playground/validator/v10 v10.30.3 // indirect
-	github.com/go-sql-driver/mysql v1.8.1 // indirect
+	github.com/go-sql-driver/mysql v1.10.0 // indirect
+	github.com/golang-migrate/migrate/v4 v4.19.1 // indirect
 	github.com/google/uuid v1.6.0 // indirect
 	github.com/gorilla/securecookie v1.1.2 // indirect
 	github.com/gotd/ige v0.2.2 // indirect
@@ -42,7 +45,7 @@ require (
 	github.com/mattn/go-colorable v0.1.14 // indirect
 	github.com/mattn/go-isatty v0.0.20 // indirect
 	github.com/ogen-go/ogen v1.20.3 // indirect
-	github.com/petaki/support-go v1.14.0 // indirect
+	github.com/pmezard/go-difflib v1.0.1-0.20181226105442-5d4384ee4fb2 // indirect
 	github.com/segmentio/asm v1.2.1 // indirect
 	github.com/shopspring/decimal v1.4.0 // indirect
 	go.opentelemetry.io/otel v1.44.0 // indirect

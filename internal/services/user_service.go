@@ -2,7 +2,6 @@ package services
 
 import (
 	"errors"
-	"fmt"
 	"strings"
 
 	"github.com/tiar/telegram-sender/internal/models"
@@ -30,8 +29,6 @@ func (s *UserService) Authenticate(username, password string) (*models.User, err
 		return nil, err
 	}
 
-	fmt.Println(username, password)
-	fmt.Println(user.Password)
 	hash := strings.TrimSpace(user.Password)
 	if err := bcrypt.CompareHashAndPassword([]byte(hash), []byte(password)); err != nil {
 		return nil, ErrInvalidCredentials
@@ -45,4 +42,13 @@ func (s *UserService) FindByID(id uint) (*models.User, error) {
 		return nil, err
 	}
 	return &user, nil
+}
+
+func (s *UserService) UpdatePassword(id uint, hashedPassword string) error {
+	db := s.db.Exec(
+		`UPDATE users SET password=? WHERE id=?`, hashedPassword, id,
+	)
+
+	Log.Write("info", "password", "user update password", nil)
+	return db.Error
 }

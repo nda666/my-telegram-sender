@@ -6,11 +6,12 @@ import (
 	"github.com/petaki/inertia-go"
 	"github.com/tiar/telegram-sender/internal/auth"
 	"github.com/tiar/telegram-sender/internal/handlers"
+	"github.com/tiar/telegram-sender/internal/services"
 )
 
-func Register(mux *http.ServeMux, h *handlers.Handlers, i *inertia.Inertia, sessions *auth.SessionManager) {
+func Register(mux *http.ServeMux, h *handlers.Handlers, i *inertia.Inertia, sessions *auth.SessionManager, userSvc *services.UserService) {
 	withAuth := func(fn http.HandlerFunc) http.Handler {
-		return i.Middleware(auth.RequireAuth(sessions, fn))
+		return i.Middleware(auth.RequireAuth(sessions, userSvc, i, fn))
 	}
 
 	mux.Handle("GET /login", i.Middleware(http.HandlerFunc(h.LoginShow)))
@@ -38,6 +39,20 @@ func Register(mux *http.ServeMux, h *handlers.Handlers, i *inertia.Inertia, sess
 	mux.Handle("GET /devices/{id}/inbox/media", withAuth(h.DeviceMediaDownload))
 	mux.Handle("GET /devices/{id}/status/stream", withAuth(h.DeviceStatusStream))
 	mux.Handle("GET /devices/{id}/profile", withAuth(h.DeviceGetProfile))
+
+	// Contacts CRUD
+	mux.Handle("GET /devices/{id}/contacts", withAuth(h.IndexContacts))
+	mux.Handle("POST /devices/{id}/contacts", withAuth(h.StoreContact))
+	mux.Handle("PUT /devices/{id}/contacts", withAuth(h.UpdateContact))
+	mux.Handle("DELETE /devices/{id}/contacts/{user_telegram_id}", withAuth(h.DeleteContact))
+
 	mux.Handle("GET /logs", withAuth(h.LogsIndex))
 	// mux.Handle("/build/", http.StripPrefix("/build/", http.FileServer(http.Dir("./public/build"))))
+
+	// Settings - Change Password
+	mux.Handle("GET /settings/password", withAuth(h.ShowChangePassword))
+	mux.Handle("POST /settings/password", withAuth(h.ChangePassword))
+
+	// Public API — pakai api key, tidak perlu session auth
+	mux.Handle("POST /api/send", http.HandlerFunc(h.APISendMessage))
 }

@@ -19,6 +19,7 @@ type Device struct {
 	TelegramPhone     string    `gorm:"size:20" json:"telegramPhone"`
 	AvatarColor       string    `gorm:"size:20" json:"avatarColor"`
 	Status            string    `gorm:"size:20;default:no_session" json:"status"`
+	ApiKey            string    `gorm:"size:255;uniqueIndex" json:"apiKey"`
 	CreatedAt         time.Time `json:"createdAt"`
 	UpdatedAt         time.Time `json:"updatedAt"`
 }

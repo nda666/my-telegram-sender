@@ -12,6 +12,7 @@ import (
 	"github.com/tiar/telegram-sender/internal/database"
 	"github.com/tiar/telegram-sender/internal/handlers"
 	"github.com/tiar/telegram-sender/internal/inertia"
+	"github.com/tiar/telegram-sender/internal/models"
 	"github.com/tiar/telegram-sender/internal/routes"
 	"github.com/tiar/telegram-sender/internal/services"
 	"github.com/tiar/telegram-sender/internal/telegram"
@@ -43,6 +44,8 @@ func main() {
 	deviceSvc := services.NewDeviceService(db, logSvc)
 	tgSvc := telegram.NewService(cfg, db, deviceSvc, logSvc)
 
+	db.AutoMigrate(&models.Device{}, &models.Log{}, &models.User{})
+
 	h := &handlers.Handlers{
 		Inertia:  i,
 		Session:  sessions,
@@ -58,7 +61,7 @@ func main() {
 	// Serve embedded static assets
 	mux.Handle("/build/", inertia.PublicHandler(PublicFS))
 
-	routes.Register(mux, h, i, sessions)
+	routes.Register(mux, h, i, sessions, userSvc)
 
 	log.Printf("listening on http://%s%s", "localhost", cfg.Addr)
 	if err := http.ListenAndServe(fmt.Sprintf("0.0.0.0%s", cfg.Addr), mux); err != nil {

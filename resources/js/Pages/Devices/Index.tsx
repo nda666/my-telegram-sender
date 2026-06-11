@@ -6,12 +6,14 @@ import {
 import {
   Button,
   Dropdown,
+  MenuProps,
   Popconfirm,
   Space,
   Table,
   Tag,
   Typography,
 } from 'antd';
+import { ColumnsType } from 'antd/es/table';
 
 import {
   DeleteOutlined,
@@ -21,6 +23,7 @@ import {
   MoreOutlined,
   PlusOutlined,
   SyncOutlined,
+  UserOutlined,
 } from '@ant-design/icons';
 import {
   Link,
@@ -94,7 +97,7 @@ export default function DevicesIndex() {
     setRefreshingProfile(false)
   };
 
-  const columns = [
+  const columns: ColumnsType<Device> = [
     { title: 'Nama', dataIndex: 'name', key: 'name' },
     { title: 'Phone', dataIndex: 'phone', key: 'phone' },
     {
@@ -103,6 +106,7 @@ export default function DevicesIndex() {
       render: (_: unknown, row: Device) =>
         row.telegramFirstName ? `${row.telegramFirstName} ${row.telegramLastName} (${row.telegramPhone})` : '-',
     },
+    { title: 'Api Key', dataIndex: 'apiKey', key: 'apiKey' },
     {
       title: 'Status',
       key: 'status',
@@ -125,7 +129,7 @@ export default function DevicesIndex() {
       title: 'Aksi',
       key: 'actions',
       render: (_, row) => {
-        const items = [
+        const items: MenuProps['items'] = [
           {
             key: 'edit',
             icon: <EditOutlined />,
@@ -135,6 +139,7 @@ export default function DevicesIndex() {
               </Link>
             ),
           },
+          { type: 'divider' },
           {
             key: 'session',
             icon: <KeyOutlined />,
@@ -158,18 +163,29 @@ export default function DevicesIndex() {
               ),
             },
             {
+              key: 'contacts',
+              icon: <UserOutlined />,
+              label: (
+                <Link href={`/devices/${row.id}/contacts`}>
+                  Contacts
+                </Link>
+              ),
+            },
+            {
               key: 'refresh',
               icon: <SyncOutlined />,
-              label: 'Refresh Profile',
+              label: <>'Refresh Profile'</>,
               onClick: () => refreshProfile(row.id),
             },
           );
         }
 
+        items.push({ type: 'divider' });
+
         items.push({
           key: 'delete',
-          danger: true,
           icon: <DeleteOutlined />,
+          danger: true,
           label: (
             <Popconfirm
               title="Hapus device ini?"
