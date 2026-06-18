@@ -8,6 +8,7 @@ import {
 } from 'antd';
 
 import {
+  ApiOutlined,
   FileTextOutlined,
   KeyOutlined,
   LogoutOutlined,
@@ -75,10 +76,11 @@ export default function AppLayout({ children }: { children: ReactNode }) {
         key: 'devices', // Key ini agar saat klik nama induk/kembali ke list utama tetap aman
         label: <Link href="/devices">← Back to List</Link>,
       },
+
       {
-        key: 'devices-session', // Gabungan clean segments: 'devices' + '-' + 'session'
-        icon: <KeyOutlined />,
-        label: <Link href={`/devices/${deviceId}/session`}>Session</Link>,
+        key: 'devices-test-api',
+        icon: <ApiOutlined />,
+        label: <Link href={`/devices/${deviceId}/test-api`}>Test Api</Link>,
       },
       {
         key: 'devices-inbox',
@@ -89,6 +91,10 @@ export default function AppLayout({ children }: { children: ReactNode }) {
         key: 'devices-contacts',
         icon: <UserOutlined />,
         label: <Link href={`/devices/${deviceId}/contacts`}>Contacts</Link>,
+      }, {
+        key: 'devices-session', // Gabungan clean segments: 'devices' + '-' + 'session'
+        icon: <KeyOutlined />,
+        label: <Link href={`/devices/${deviceId}/session`}>Session</Link>,
       },
     ];
   }

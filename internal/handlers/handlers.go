@@ -1,6 +1,8 @@
 package handlers
 
 import (
+	"encoding/json"
+	"fmt"
 	"log"
 	"net/http"
 	"strconv"
@@ -33,6 +35,7 @@ func (h *Handlers) render(w http.ResponseWriter, r *http.Request, page string, p
 }
 
 func (h *Handlers) redirect(w http.ResponseWriter, r *http.Request, url string) {
+	fmt.Printf("Header: %s", r.Header.Get(inertia.HeaderInertia))
 	h.Inertia.Location(w, r, url)
 }
 
@@ -46,4 +49,10 @@ func parseID(r *http.Request, key string) (uint, bool) {
 		return 0, false
 	}
 	return uint(id), true
+}
+
+func respondJSON(w http.ResponseWriter, status int, data any) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(status)
+	_ = json.NewEncoder(w).Encode(data)
 }

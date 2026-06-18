@@ -19,9 +19,9 @@ func Connect(dsn string) (*gorm.DB, error) {
 		return nil, fmt.Errorf("connect mysql: %w", err)
 	}
 
-	if err := db.AutoMigrate(&models.User{}, &models.Device{}, &models.Log{}); err != nil {
-		return nil, fmt.Errorf("migrate: %w", err)
-	}
+	// if err := db.AutoMigrate(&models.User{}, &models.Device{}, &models.Log{}); err != nil {
+	// 	return nil, fmt.Errorf("migrate: %w", err)
+	// }
 
 	if err := seedAdmin(db); err != nil {
 		return nil, err

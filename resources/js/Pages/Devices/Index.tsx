@@ -1,11 +1,9 @@
-import {
-  useEffect,
-  useState,
-} from 'react';
+import { useState } from 'react';
 
 import {
   Button,
   Dropdown,
+  Flex,
   MenuProps,
   Popconfirm,
   Space,
@@ -16,6 +14,7 @@ import {
 import { ColumnsType } from 'antd/es/table';
 
 import {
+  ApiOutlined,
   DeleteOutlined,
   EditOutlined,
   KeyOutlined,
@@ -40,7 +39,6 @@ type Device = {
   telegramFirstName: string;
   telegramLastName: string;
   telegramPhone: string;
-  status: 'no_session' | 'offline' | 'online';
   hasSession: boolean;
   createdAt: string;
 };
@@ -51,50 +49,29 @@ type PageProps = {
 
 const statusConfig = {
   no_session: { color: 'default', label: 'Belum ada session' },
-  offline: { color: 'orange', label: 'Offline' },
-  online: { color: 'green', label: 'Online' },
+  has_session: { color: 'green', label: 'Session OK' },
 } as const;
 
-// Satu SSE connection per device yang punya session
-function useDevicesStatus(devices: Device[]) {
-  const [statusMap, setStatusMap] = useState<Record<number, Device['status']>>(() =>
-    Object.fromEntries(devices.map((d) => [d.id, d.status]))
-  );
-
-  useEffect(() => {
-    const sources: EventSource[] = [];
-
-    devices
-      .filter((d) => d.hasSession)
-      .forEach((d) => {
-        const es = new EventSource(`/devices/${d.id}/status/stream`);
-        es.onmessage = (e) => {
-          const s = e.data.trim() as Device['status'];
-          setStatusMap((prev) => ({ ...prev, [d.id]: s }));
-        };
-        sources.push(es);
-      });
-
-    return () => sources.forEach((es) => es.close());
-  }, []); // hanya mount sekali
-
-  return statusMap;
-}
 
 export default function DevicesIndex() {
+  const [deleteTarget, setDeleteTarget] = useState<Device | null>(null);
   const { devices } = usePage<PageProps>().props;
-  const [refreshingProfile, setRefreshingProfile] = useState(false);
-  const statusMap = useDevicesStatus(devices);
-
+  const [refreshingProfile, setRefreshingProfile] = useState<Record<number, boolean>>({});
   const refreshProfile = async (deviceId: number) => {
-    setRefreshingProfile(true);
+    setRefreshingProfile(prev => ({
+      ...prev,
+      [deviceId]: true,
+    }));
     const res = await fetch(`/devices/${deviceId}/profile`);
     const data = await res.json();
     if (!data.error) {
       router.reload({ only: ['devices'] }); // Inertia partial reload
 
     }
-    setRefreshingProfile(false)
+    setRefreshingProfile(prev => ({
+      ...prev,
+      [deviceId]: false,
+    }));
   };
 
   const columns: ColumnsType<Device> = [
@@ -103,17 +80,30 @@ export default function DevicesIndex() {
     {
       title: 'Telegram',
       key: 'telegram',
-      render: (_: unknown, row: Device) =>
-        row.telegramFirstName ? `${row.telegramFirstName} ${row.telegramLastName} (${row.telegramPhone})` : '-',
+      render: (_: unknown, row: Device) => {
+        let name = row.telegramFirstName ? `${row.telegramFirstName} ${row.telegramLastName} (${row.telegramPhone})` : '-';
+
+        return <Flex gap={5} style={{ position: "relative" }}>
+          <Typography.Text disabled={!!refreshingProfile[row.id]} >{name}</Typography.Text>
+          {!!refreshingProfile[row.id] && (
+
+            <SyncOutlined
+              spin={!!refreshingProfile[row.id]}
+              style={{
+                color: refreshingProfile[row.id] ? '#1890ff' : '#999',
+              }}
+            />)}
+        </Flex>;
+      }
+
     },
     { title: 'Api Key', dataIndex: 'apiKey', key: 'apiKey' },
     {
       title: 'Status',
       key: 'status',
       render: (_: unknown, row: Device) => {
-        const status = statusMap[row.id] ?? row.status;
-        const cfg = statusConfig[status] ?? statusConfig.no_session;
-        const isOnline = status === 'online';
+        const status = row.hasSession;
+        const cfg = status ? statusConfig.has_session : statusConfig.no_session;
         return (
           <Tag
             color={cfg.color}
@@ -154,6 +144,15 @@ export default function DevicesIndex() {
         if (row.hasSession) {
           items.push(
             {
+              key: 'test-api',
+              icon: <ApiOutlined />,
+              label: (
+                <Link href={`/devices/${row.id}/test-api`}>
+                  Test Api
+                </Link>
+              ),
+            },
+            {
               key: 'inbox',
               icon: <MessageOutlined />,
               label: (
@@ -172,8 +171,10 @@ export default function DevicesIndex() {
               ),
             },
             {
+
+              disabled: !!refreshingProfile[row.id],
               key: 'refresh',
-              icon: <SyncOutlined />,
+              icon: <SyncOutlined spin={!!refreshingProfile[row.id]} />,
               label: <>'Refresh Profile'</>,
               onClick: () => refreshProfile(row.id),
             },
@@ -186,14 +187,8 @@ export default function DevicesIndex() {
           key: 'delete',
           icon: <DeleteOutlined />,
           danger: true,
-          label: (
-            <Popconfirm
-              title="Hapus device ini?"
-              onConfirm={() => router.delete(`/devices/${row.id}`)}
-            >
-              Hapus
-            </Popconfirm>
-          ),
+          onClick: () => setDeleteTarget(row),
+          label: (<> Hapus</>),
         });
 
         return (
@@ -222,6 +217,7 @@ export default function DevicesIndex() {
             <Dropdown
               menu={{ items }}
               trigger={['click']}
+
             >
               <Button
                 size="small"
@@ -230,6 +226,19 @@ export default function DevicesIndex() {
                 Lainnya
               </Button>
             </Dropdown>
+
+            <Popconfirm
+              open={deleteTarget?.id === row.id}
+              title="Hapus device ini?"
+              onConfirm={() => {
+                router.delete(`/devices/${row.id}`);
+                setDeleteTarget(null);
+              }}
+              onCancel={() => setDeleteTarget(null)}
+            >
+              {/* dummy anchor supaya Popconfirm attach ke row context */}
+              <span />
+            </Popconfirm>
           </Space>
         );
       },
@@ -246,6 +255,7 @@ export default function DevicesIndex() {
           <Button type="primary" icon={<PlusOutlined />}>Tambah Device</Button>
         </Link>
       </Space>
+
       <Table rowKey="id" dataSource={devices} columns={columns} pagination={false} />
     </AppLayout>
   );

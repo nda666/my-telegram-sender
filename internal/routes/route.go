@@ -37,8 +37,8 @@ func Register(mux *http.ServeMux, h *handlers.Handlers, i *inertia.Inertia, sess
 	mux.Handle("GET /devices/{id}/inbox/messages", withAuth(h.DeviceChatHistory))
 	mux.Handle("POST /devices/{id}/inbox/send", withAuth(h.DeviceSendInboxMessage))
 	mux.Handle("GET /devices/{id}/inbox/media", withAuth(h.DeviceMediaDownload))
-	mux.Handle("GET /devices/{id}/status/stream", withAuth(h.DeviceStatusStream))
 	mux.Handle("GET /devices/{id}/profile", withAuth(h.DeviceGetProfile))
+	mux.Handle("GET /devices/{id}/test-api", withAuth(h.DeviceTestApi))
 
 	// Contacts CRUD
 	mux.Handle("GET /devices/{id}/contacts", withAuth(h.IndexContacts))

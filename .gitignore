@@ -1,4 +1,5 @@
 .env
+.env.prod
 tmp/
 node_modules/
 public/build/
@@ -7,3 +8,5 @@ build-errors.log
 
 .history
 .vscode
+
+telegram-sender

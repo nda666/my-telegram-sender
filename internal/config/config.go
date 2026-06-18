@@ -12,6 +12,7 @@ type Config struct {
 	Addr      string
 	DSN       string
 	CookieKey string
+	AppEnv    string
 }
 
 func Load() Config {
@@ -33,6 +34,8 @@ func Load() Config {
 		cookieKey = "change-me-in-production"
 	}
 
+	appEnv := os.Getenv("APP_ENV")
+
 	return Config{
 		AppID:     appID,
 		AppHash:   os.Getenv("APP_HASH"),
@@ -40,5 +43,6 @@ func Load() Config {
 		Addr:      addr,
 		DSN:       dsn,
 		CookieKey: cookieKey,
+		AppEnv:    appEnv,
 	}
 }

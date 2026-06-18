@@ -1,7 +1,6 @@
 package handlers
 
 import (
-	"encoding/json"
 	"fmt"
 	"net/http"
 	"strconv"
@@ -187,10 +186,4 @@ func (h *Handlers) DeviceMediaDownload(w http.ResponseWriter, r *http.Request) {
 		// header sudah terkirim kalau ada data, log saja
 		_ = err
 	}
-}
-
-func respondJSON(w http.ResponseWriter, status int, data any) {
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(status)
-	_ = json.NewEncoder(w).Encode(data)
 }

@@ -14,10 +14,12 @@ import (
 	"github.com/gotd/contrib/middleware/ratelimit"
 	"github.com/gotd/td/telegram"
 	"github.com/gotd/td/telegram/auth"
+	"github.com/gotd/td/telegram/uploader"
 	"github.com/gotd/td/tg"
 	"github.com/tiar/telegram-sender/internal/config"
 	"github.com/tiar/telegram-sender/internal/models"
 	"github.com/tiar/telegram-sender/internal/services"
+	"github.com/tiar/telegram-sender/internal/utils"
 	"golang.org/x/time/rate"
 	"gorm.io/gorm"
 )
@@ -189,39 +191,6 @@ func (s *Service) CheckOnline(ctx context.Context, deviceID uint) (string, error
 	return status, nil
 }
 
-func (s *Service) WatchOnline(ctx context.Context, deviceID uint, interval time.Duration, onChange func(status string)) {
-	ticker := time.NewTicker(interval)
-	defer ticker.Stop()
-	var lastStatus string
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case <-ticker.C:
-			status, err := s.CheckOnline(ctx, deviceID)
-			if err != nil {
-				continue
-			}
-			if status != lastStatus {
-				lastStatus = status
-				onChange(status)
-			}
-		}
-	}
-}
-
-func (s *Service) CheckAllStatus(ctx context.Context, devices []models.Device) {
-	for _, d := range devices {
-		if !d.HasSession() {
-			continue
-		}
-		status, err := s.CheckOnline(ctx, d.ID)
-		if err != nil {
-			continue
-		}
-		d.Status = status
-	}
-}
 
 type ChatItem struct {
 	ID          int64  `json:"id,string"`
@@ -509,6 +478,7 @@ func (s *Service) GetMessages(ctx context.Context, deviceID uint, peerType strin
 
 	return items, err
 }
+
 func (s *Service) SendTelegramMessage(ctx context.Context, deviceID uint, peerType string, peerID int64, accessHash int64, text string) error {
 	return s.Run(ctx, deviceID, func(ctx context.Context, client *telegram.Client, api *tg.Client) error {
 		var peer tg.InputPeerClass
@@ -543,6 +513,238 @@ func (s *Service) SendTelegramMessage(ctx context.Context, deviceID uint, peerTy
 		return err
 	})
 
+}
+
+// Tambahkan ke internal/telegram/service.go
+
+func (s *Service) SendTelegramMedia(
+	ctx context.Context,
+	deviceID uint,
+	peerType string,
+	peerID int64,
+	accessHash int64,
+	data io.Reader,
+	filename string,
+	mtype string,
+	caption string,
+) error {
+	return s.Run(ctx, deviceID, func(ctx context.Context, client *telegram.Client, api *tg.Client) error {
+		var peer tg.InputPeerClass
+		switch peerType {
+		case "user":
+			peer = &tg.InputPeerUser{UserID: peerID, AccessHash: accessHash}
+		case "channel":
+			peer = &tg.InputPeerChannel{ChannelID: peerID, AccessHash: accessHash}
+		case "chat":
+			peer = &tg.InputPeerChat{ChatID: peerID}
+		default:
+			return fmt.Errorf("invalid peer type: %s", peerType)
+		}
+
+		raw, err := io.ReadAll(data)
+		if err != nil {
+			return fmt.Errorf("read media: %w", err)
+		}
+
+		u := uploader.NewUploader(api)
+		upload, err := u.FromBytes(ctx, filename, raw)
+		if err != nil {
+			return fmt.Errorf("upload media: %w", err)
+		}
+
+		var inputMedia tg.InputMediaClass
+		switch mtype {
+		case "photo":
+			inputMedia = &tg.InputMediaUploadedPhoto{
+				File: upload,
+			}
+		case "video":
+			inputMedia = &tg.InputMediaUploadedDocument{
+				File:     upload,
+				MimeType: utils.MimeByExt(filename),
+				Attributes: []tg.DocumentAttributeClass{
+					&tg.DocumentAttributeVideo{
+						SupportsStreaming: true,
+					},
+					&tg.DocumentAttributeFilename{FileName: filename},
+				},
+			}
+		case "audio":
+			inputMedia = &tg.InputMediaUploadedDocument{
+				File:     upload,
+				MimeType: utils.MimeByExt(filename),
+				Attributes: []tg.DocumentAttributeClass{
+					&tg.DocumentAttributeAudio{},
+					&tg.DocumentAttributeFilename{FileName: filename},
+				},
+			}
+		default: // document
+			inputMedia = &tg.InputMediaUploadedDocument{
+				File:     upload,
+				MimeType: utils.MimeByExt(filename),
+				Attributes: []tg.DocumentAttributeClass{
+					&tg.DocumentAttributeFilename{FileName: filename},
+				},
+			}
+		}
+
+		var b [8]byte
+		_, _ = rand.Read(b[:])
+		randomID := int64(binary.BigEndian.Uint64(b[:]))
+
+		_, err = api.MessagesSendMedia(ctx, &tg.MessagesSendMediaRequest{
+			Peer:     peer,
+			Media:    inputMedia,
+			Message:  caption, // caption
+			RandomID: randomID,
+		})
+		return err
+	})
+}
+
+// SendTelegramMessageByPhone resolves phone number via contacts.ImportContacts
+// lalu kirim pesan. Contact sementara, dihapus setelah send.
+func (s *Service) SendTelegramMessageByPhone(ctx context.Context, deviceID uint, phone, text string) error {
+	return s.Run(ctx, deviceID, func(ctx context.Context, client *telegram.Client, api *tg.Client) error {
+		// 1. normalize: pastikan ada prefix +
+		if !strings.HasPrefix(phone, "+") {
+			phone = "+" + phone
+		}
+
+		// 2. import contact sementara untuk resolve phone → user
+		imported, err := api.ContactsImportContacts(ctx, []tg.InputPhoneContact{
+			{
+				ClientID:  0,
+				Phone:     phone,
+				FirstName: "tmp",
+				LastName:  "",
+			},
+		})
+		if err != nil {
+			return fmt.Errorf("resolve phone: %w", err)
+		}
+
+		// 3. ambil user dari hasil import
+		var target *tg.User
+		for _, uClass := range imported.Users {
+			if u, ok := uClass.(*tg.User); ok {
+				target = u
+				break
+			}
+		}
+		if target == nil {
+			return fmt.Errorf("nomor %s tidak ditemukan di Telegram", phone)
+		}
+
+		// 4. kirim pesan
+		var b [8]byte
+		_, _ = rand.Read(b[:])
+		randomID := int64(binary.BigEndian.Uint64(b[:]))
+
+		_, sendErr := api.MessagesSendMessage(ctx, &tg.MessagesSendMessageRequest{
+			Peer: &tg.InputPeerUser{
+				UserID:     target.ID,
+				AccessHash: target.AccessHash,
+			},
+			Message:  text,
+			RandomID: randomID,
+		})
+
+		// 5. cleanup: hapus contact sementara (best effort, ignore error)
+		_, _ = api.ContactsDeleteContacts(ctx, []tg.InputUserClass{
+			&tg.InputUser{
+				UserID:     target.ID,
+				AccessHash: target.AccessHash,
+			},
+		})
+
+		return sendErr
+	})
+}
+
+// SendTelegramMediaByPhone — sama tapi kirim media
+func (s *Service) SendTelegramMediaByPhone(ctx context.Context, deviceID uint, phone string, data io.Reader, filename, mtype, caption string) error {
+	return s.Run(ctx, deviceID, func(ctx context.Context, client *telegram.Client, api *tg.Client) error {
+		if !strings.HasPrefix(phone, "+") {
+			phone = "+" + phone
+		}
+
+		imported, err := api.ContactsImportContacts(ctx, []tg.InputPhoneContact{
+			{ClientID: 0, Phone: phone, FirstName: "tmp"},
+		})
+		if err != nil {
+			return fmt.Errorf("resolve phone: %w", err)
+		}
+
+		var target *tg.User
+		for _, uClass := range imported.Users {
+			if u, ok := uClass.(*tg.User); ok {
+				target = u
+				break
+			}
+		}
+		if target == nil {
+			return fmt.Errorf("nomor %s tidak ditemukan di Telegram", phone)
+		}
+
+		raw, err := io.ReadAll(data)
+		if err != nil {
+			return fmt.Errorf("read media: %w", err)
+		}
+
+		u := uploader.NewUploader(api)
+		upload, err := u.FromBytes(ctx, filename, raw)
+		if err != nil {
+			return fmt.Errorf("upload media: %w", err)
+		}
+
+		var inputMedia tg.InputMediaClass
+		switch mtype {
+		case "photo":
+			inputMedia = &tg.InputMediaUploadedPhoto{File: upload}
+		case "video":
+			inputMedia = &tg.InputMediaUploadedDocument{
+				File:     upload,
+				MimeType: utils.MimeByExt(filename),
+				Attributes: []tg.DocumentAttributeClass{
+					&tg.DocumentAttributeVideo{SupportsStreaming: true},
+					&tg.DocumentAttributeFilename{FileName: filename},
+				},
+			}
+		case "audio":
+			inputMedia = &tg.InputMediaUploadedDocument{
+				File:     upload,
+				MimeType: utils.MimeByExt(filename),
+				Attributes: []tg.DocumentAttributeClass{
+					&tg.DocumentAttributeAudio{},
+					&tg.DocumentAttributeFilename{FileName: filename},
+				},
+			}
+		default:
+			inputMedia = &tg.InputMediaUploadedDocument{
+				File:       upload,
+				MimeType:   utils.MimeByExt(filename),
+				Attributes: []tg.DocumentAttributeClass{&tg.DocumentAttributeFilename{FileName: filename}},
+			}
+		}
+
+		var b [8]byte
+		_, _ = rand.Read(b[:])
+		randomID := int64(binary.BigEndian.Uint64(b[:]))
+
+		_, sendErr := api.MessagesSendMedia(ctx, &tg.MessagesSendMediaRequest{
+			Peer:     &tg.InputPeerUser{UserID: target.ID, AccessHash: target.AccessHash},
+			Media:    inputMedia,
+			Message:  caption,
+			RandomID: randomID,
+		})
+
+		_, _ = api.ContactsDeleteContacts(ctx, []tg.InputUserClass{
+			&tg.InputUser{UserID: target.ID, AccessHash: target.AccessHash},
+		})
+
+		return sendErr
+	})
 }
 
 func (s *Service) DownloadMedia(ctx context.Context, deviceID uint, peerType string, peerID int64, accessHash int64, msgID int, w io.Writer) error {

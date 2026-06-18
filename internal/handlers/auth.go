@@ -43,7 +43,7 @@ func (h *Handlers) Login(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := h.Session.SetUserID(w, r, user.ID); err != nil {
-		http.Error(w, "server error", http.StatusInternalServerError)
+		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
 

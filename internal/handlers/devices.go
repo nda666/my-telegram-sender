@@ -1,14 +1,12 @@
 package handlers
 
 import (
-	"context"
-	"fmt"
 	"net/http"
 	"strings"
-	"time"
 
 	"github.com/go-playground/validator/v10"
 	"github.com/tiar/telegram-sender/internal/models"
+	"github.com/tiar/telegram-sender/internal/utils"
 	"gorm.io/gorm"
 )
 
@@ -94,9 +92,6 @@ func (h *Handlers) DevicesIndex(w http.ResponseWriter, r *http.Request) {
 		items[i] = deviceJSON(d)
 	}
 
-	// Pindah ke bawah loop biar gak race condition saat mapping ke 'items'
-	go h.Telegram.CheckAllStatus(context.Background(), devices)
-
 	h.render(w, r, "Devices/Index", map[string]any{
 		"devices": items,
 	})
@@ -114,6 +109,8 @@ func (h *Handlers) DevicesStore(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "bad request", http.StatusBadRequest)
 		return
 	}
+
+	req.Phone = utils.NormalizePhone(req.Phone)
 
 	req.Name = strings.TrimSpace(req.Name)
 	req.Phone = strings.TrimSpace(req.Phone)
@@ -228,43 +225,6 @@ func deviceJSON(d models.Device) map[string]any {
 		"hasSession":        d.HasSession(),
 		"createdAt":         d.CreatedAt.Format("2006-01-02 15:04"),
 	}
-}
-
-func (h *Handlers) DeviceStatusStream(w http.ResponseWriter, r *http.Request) {
-	id, ok := parseID(r, "id")
-	if !ok {
-		http.NotFound(w, r)
-		return
-	}
-
-	w.Header().Set("Content-Type", "text/event-stream")
-	w.Header().Set("Cache-Control", "no-cache")
-	w.Header().Set("Connection", "keep-alive")
-	w.Header().Set("X-Accel-Buffering", "no") // penting kalau pakai nginx
-
-	flusher, ok := w.(http.Flusher)
-	if !ok {
-		http.Error(w, "streaming not supported", http.StatusInternalServerError)
-		return
-	}
-
-	// Kirim status awal langsung
-	device, err := h.Devices.Find(id)
-	if err != nil {
-		return
-	}
-	initialStatus := "no_session"
-	if device.HasSession() {
-		initialStatus = device.Status
-	}
-	fmt.Fprintf(w, "data: %s\n\n", initialStatus)
-	flusher.Flush()
-
-	ctx := r.Context()
-	h.Telegram.WatchOnline(ctx, id, 3*time.Second, func(status string) {
-		fmt.Fprintf(w, "data: %s\n\n", status)
-		flusher.Flush()
-	})
 }
 
 func (h *Handlers) DeviceGetProfile(w http.ResponseWriter, r *http.Request) {
