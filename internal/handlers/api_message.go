@@ -3,6 +3,7 @@ package handlers
 import (
 	"bytes"
 	"encoding/base64"
+	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
@@ -10,6 +11,53 @@ import (
 	"strconv"
 	"strings"
 )
+
+type apiErrorResponse struct {
+	Error     string         `json:"error"`
+	ErrorType string         `json:"error_type"`
+	Detail    map[string]any `json:"detail,omitempty"`
+}
+
+type apiTelegramError struct {
+	Message    string
+	Type       string
+	Detail     map[string]any
+	HTTPStatus int
+}
+
+func telegramErrorToAPI(err error) apiTelegramError {
+	if err == nil {
+		return apiTelegramError{Message: "", Type: "terserah_yang_penting_sesuai_dengan_telegram", Detail: nil, HTTPStatus: http.StatusInternalServerError}
+	}
+
+	// If telegram service returns a typed error, use it.
+	type typed interface {
+		APIError() (msg string, errType string, detail map[string]any, httpStatus int)
+	}
+	if te, ok := err.(typed); ok {
+		msg, errType, detail, httpStatus := te.APIError()
+		if msg == "" {
+			msg = err.Error()
+		}
+		if errType == "" {
+			errType = "terserah_yang_penting_sesuai_dengan_telegram"
+		}
+		if httpStatus == 0 {
+			httpStatus = http.StatusInternalServerError
+		}
+		return apiTelegramError{Message: msg, Type: errType, Detail: detail, HTTPStatus: httpStatus}
+	}
+
+	return apiTelegramError{Message: err.Error(), Type: "terserah_yang_penting_sesuai_dengan_telegram", Detail: nil, HTTPStatus: http.StatusInternalServerError}
+}
+
+func jsonErrorTyped(w http.ResponseWriter, msg, errorType string, detail map[string]any, code int) {
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(code)
+	resp := apiErrorResponse{Error: msg, ErrorType: errorType, Detail: detail}
+	_ = json.NewEncoder(w).Encode(resp)
+}
 
 // APISendMessage — POST /api/send
 // Header: X-Api-Key: <uuid>
@@ -38,13 +86,13 @@ func (h *Handlers) APISendMessage(w http.ResponseWriter, r *http.Request) {
 		apiKey = r.URL.Query().Get("api_key")
 	}
 	if apiKey == "" {
-		jsonError(w, "Missing API key", http.StatusUnauthorized)
+		jsonErrorTyped(w, "Missing API key", "invalid_api_key", nil, http.StatusUnauthorized)
 		return
 	}
 
 	device, err := h.Devices.FindByAPIKey(apiKey)
 	if err != nil {
-		jsonError(w, "Invalid API key", http.StatusUnauthorized)
+		jsonErrorTyped(w, "Invalid API key", "invalid_api_key", nil, http.StatusUnauthorized)
 		return
 	}
 
@@ -65,9 +113,10 @@ func (h *Handlers) APISendMessage(w http.ResponseWriter, r *http.Request) {
 	if strings.HasPrefix(ct, "multipart/form-data") {
 		// ── multipart ──────────────────────────────────────────────────────────
 		if err := r.ParseMultipartForm(64 << 20); err != nil { // 64 MB
-			jsonError(w, "Failed to parse multipart form", http.StatusBadRequest)
+			jsonErrorTyped(w, "Failed to parse multipart form", "bad_request", nil, http.StatusBadRequest)
 			return
 		}
+
 		chatIDStr = r.FormValue("chat_id")
 		peerType = r.FormValue("peer_type")
 		caption = r.FormValue("caption")
@@ -102,9 +151,10 @@ func (h *Handlers) APISendMessage(w http.ResponseWriter, r *http.Request) {
 		}
 		req, err := Bind[Req](r)
 		if err != nil {
-			jsonError(w, "Invalid request body", http.StatusBadRequest)
+			jsonErrorTyped(w, "Invalid request body", "bad_request", nil, http.StatusBadRequest)
 			return
 		}
+
 		chatIDStr = req.ChatID
 		phoneTarget = req.Phone
 		peerType = req.PeerType
@@ -170,55 +220,64 @@ func (h *Handlers) APISendMessage(w http.ResponseWriter, r *http.Request) {
 	if phoneTarget != "" {
 		if mediaReader != nil {
 			if err := h.Telegram.SendTelegramMediaByPhone(r.Context(), device.ID, phoneTarget, mediaReader, mediaName, mtype, caption); err != nil {
-				jsonError(w, "Failed to send media: "+err.Error(), http.StatusInternalServerError)
+				apiErr := telegramErrorToAPI(err)
+				jsonErrorTyped(w, apiErr.Message, apiErr.Type, apiErr.Detail, apiErr.HTTPStatus)
 				return
 			}
+
 			jsonOK(w, map[string]any{"message": fmt.Sprintf("%s sent", mtype)})
 			return
 		}
 		if message == "" {
-			jsonError(w, "message or media file is required", http.StatusUnprocessableEntity)
+			jsonErrorTyped(w, "message or media file is required", "unprocessable_entity", nil, http.StatusUnprocessableEntity)
 			return
 		}
 		if err := h.Telegram.SendTelegramMessageByPhone(r.Context(), device.ID, phoneTarget, message); err != nil {
-			jsonError(w, "Failed to send message: "+err.Error(), http.StatusInternalServerError)
+			apiErr := telegramErrorToAPI(err)
+			jsonErrorTyped(w, apiErr.Message, apiErr.Type, apiErr.Detail, apiErr.HTTPStatus)
 			return
 		}
+
 		jsonOK(w, map[string]any{"message": "Message sent"})
 		return
 	}
 
 	// PATH B: kirim by chat_id (existing flow)
 	if chatIDStr == "" {
-		jsonError(w, "chat_id or phone is required", http.StatusUnprocessableEntity)
+		jsonErrorTyped(w, "chat_id or phone is required", "unprocessable_entity", nil, http.StatusUnprocessableEntity)
 		return
 	}
 	peerID, err := strconv.ParseInt(chatIDStr, 10, 64)
 	if err != nil {
-		jsonError(w, "chat_id must be a numeric Telegram ID", http.StatusUnprocessableEntity)
+		jsonErrorTyped(w, "chat_id must be a numeric Telegram ID", "unprocessable_entity", nil, http.StatusUnprocessableEntity)
 		return
 	}
+
 	if peerType == "" {
 		peerType = "user"
 	}
 
 	if mediaReader != nil {
 		if err := h.Telegram.SendTelegramMedia(r.Context(), device.ID, peerType, peerID, accessHash, mediaReader, mediaName, mtype, caption); err != nil {
-			jsonError(w, "Failed to send media: "+err.Error(), http.StatusInternalServerError)
+			apiErr := telegramErrorToAPI(err)
+			jsonErrorTyped(w, apiErr.Message, apiErr.Type, apiErr.Detail, apiErr.HTTPStatus)
 			return
 		}
+
 		jsonOK(w, map[string]any{"message": fmt.Sprintf("%s sent", mtype)})
 		return
 	}
 
 	if message == "" {
-		jsonError(w, "message or media file is required", http.StatusUnprocessableEntity)
+		jsonErrorTyped(w, "message or media file is required", "unprocessable_entity", nil, http.StatusUnprocessableEntity)
 		return
 	}
 	if err := h.Telegram.SendTelegramMessage(r.Context(), device.ID, peerType, peerID, accessHash, message); err != nil {
-		jsonError(w, "Failed to send message: "+err.Error(), http.StatusInternalServerError)
+		apiErr := telegramErrorToAPI(err)
+		jsonErrorTyped(w, apiErr.Message, apiErr.Type, apiErr.Detail, apiErr.HTTPStatus)
 		return
 	}
+
 	jsonOK(w, map[string]any{"message": "Message sent"})
 }
 
