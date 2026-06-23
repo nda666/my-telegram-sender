@@ -8,7 +8,12 @@ import (
 	"os"
 
 	_ "ariga.io/atlas-provider-gorm/gormschema"
+
+	httpSwagger "github.com/swaggo/http-swagger"
+	_ "github.com/tiar/telegram-sender/docs"
+
 	"github.com/joho/godotenv"
+
 	"github.com/tiar/telegram-sender/internal/auth"
 	"github.com/tiar/telegram-sender/internal/config"
 	"github.com/tiar/telegram-sender/internal/database"
@@ -89,7 +94,9 @@ func main() {
 
 	// Serve embedded static assets
 	mux.Handle("/build/", inertia.PublicHandler(PublicFS))
-
+	mux.Handle("/swagger/", httpSwagger.Handler(
+		httpSwagger.URL(fmt.Sprintf("http://localhost:%d/swagger/doc.json", 8000)),
+	))
 	routes.Register(mux, h, i, sessions, userSvc)
 
 	log.Printf("listening on http://%s%s", "localhost", cfg.Addr)

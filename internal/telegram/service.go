@@ -14,6 +14,7 @@ import (
 	"github.com/gotd/contrib/middleware/ratelimit"
 	"github.com/gotd/td/telegram"
 	"github.com/gotd/td/telegram/auth"
+
 	"github.com/gotd/td/telegram/uploader"
 	"github.com/gotd/td/tg"
 	"github.com/tiar/telegram-sender/internal/config"
@@ -190,7 +191,6 @@ func (s *Service) CheckOnline(ctx context.Context, deviceID uint) (string, error
 	_ = s.devices.UpdateStatus(deviceID, status)
 	return status, nil
 }
-
 
 type ChatItem struct {
 	ID          int64  `json:"id,string"`
@@ -636,6 +636,11 @@ func (s *Service) SendTelegramMessageByPhone(ctx context.Context, deviceID uint,
 			return fmt.Errorf("nomor %s tidak ditemukan di Telegram", phone)
 		}
 
+		text, entities := parseWAFormat(text)
+
+		if err != nil {
+			return err
+		}
 		// 4. kirim pesan
 		var b [8]byte
 		_, _ = rand.Read(b[:])
@@ -648,6 +653,7 @@ func (s *Service) SendTelegramMessageByPhone(ctx context.Context, deviceID uint,
 			},
 			Message:  text,
 			RandomID: randomID,
+			Entities: entities,
 		})
 
 		// 5. cleanup: hapus contact sementara (best effort, ignore error)
@@ -660,6 +666,85 @@ func (s *Service) SendTelegramMessageByPhone(ctx context.Context, deviceID uint,
 
 		return sendErr
 	})
+}
+
+// ParseWAFormat convert WA-style markdown (*bold*, _italic_, ~strike~, ```mono```)
+// jadi plain text + Telegram entities (offset/length dalam UTF-16 code units).
+// Catatan: gak support nested marker, dan marker yang gak ketutup bakal hilang (silently stripped).
+func parseWAFormat(input string) (string, []tg.MessageEntityClass) {
+	runes := []rune(input)
+	var out []rune
+	var entities []tg.MessageEntityClass
+
+	type openSpan struct {
+		sym   rune
+		start int
+	}
+	var stack []openSpan
+	pos := 0
+
+	utf16Len := func(r rune) int {
+		if r > 0xFFFF {
+			return 2
+		}
+		return 1
+	}
+
+	i := 0
+	for i < len(runes) {
+		// triple backtick block (mono)
+		if runes[i] == '`' && i+2 < len(runes) && runes[i+1] == '`' && runes[i+2] == '`' {
+			end := -1
+			for j := i + 3; j+2 < len(runes); j++ {
+				if runes[j] == '`' && runes[j+1] == '`' && runes[j+2] == '`' {
+					end = j
+					break
+				}
+			}
+			if end != -1 {
+				start := pos
+				length := 0
+				for _, r := range runes[i+3 : end] {
+					out = append(out, r)
+					length += utf16Len(r)
+				}
+				entities = append(entities, &tg.MessageEntityPre{Offset: start, Length: length})
+				pos += length
+				i = end + 3
+				continue
+			}
+		}
+
+		r := runes[i]
+		if r == '*' || r == '_' || r == '~' {
+			if n := len(stack); n > 0 && stack[n-1].sym == r {
+				span := stack[n-1]
+				stack = stack[:n-1]
+				length := pos - span.start
+				var ent tg.MessageEntityClass
+				switch r {
+				case '*':
+					ent = &tg.MessageEntityBold{Offset: span.start, Length: length}
+				case '_':
+					ent = &tg.MessageEntityItalic{Offset: span.start, Length: length}
+				case '~':
+					ent = &tg.MessageEntityStrike{Offset: span.start, Length: length}
+				}
+				entities = append(entities, ent)
+				i++
+				continue
+			}
+			stack = append(stack, openSpan{sym: r, start: pos})
+			i++
+			continue
+		}
+
+		out = append(out, r)
+		pos += utf16Len(r)
+		i++
+	}
+
+	return string(out), entities
 }
 
 // SendTelegramMediaByPhone — sama tapi kirim media

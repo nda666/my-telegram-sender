@@ -1,5 +1,5 @@
 .env
-.env.prod
+.env.production
 tmp/
 node_modules/
 public/build/

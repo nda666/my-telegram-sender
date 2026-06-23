@@ -1,0 +1,130 @@
+definitions:
+  handlers.apiErrorResponse:
+    properties:
+      detail:
+        additionalProperties: {}
+        type: object
+      error:
+        type: string
+      error_type:
+        type: string
+    type: object
+  handlers.apiSendMessageRequest:
+    properties:
+      access_hash:
+        example: 0
+        type: integer
+      caption:
+        example: Photo Caption
+        type: string
+      chat_id:
+        example: "123456789"
+        type: string
+      media_base64:
+        type: string
+      media_filename:
+        example: photo.jpg
+        type: string
+      media_url:
+        example: https://example.com/photo.jpg
+        type: string
+      message:
+        example: Hello World
+        type: string
+      peer_type:
+        example: user
+        type: string
+      phone:
+        example: "6281234567890"
+        type: string
+    type: object
+  handlers.apiSendMessageResponse:
+    properties:
+      message:
+        example: Message sent
+        type: string
+    type: object
+info:
+  contact: {}
+paths:
+  /api/send:
+    post:
+      consumes:
+      - application/json
+      - multipart/form-data
+      description: |-
+        Send text, photo, video, audio, or document using a registered device API key.
+
+        Authentication:
+        - Header: X-Api-Key
+        - Or query parameter: api_key
+      parameters:
+      - description: Device API Key
+        in: header
+        name: X-Api-Key
+        required: true
+        type: string
+      - description: Device API Key
+        in: query
+        name: api_key
+        type: string
+      - description: JSON Request
+        in: body
+        name: request
+        schema:
+          $ref: '#/definitions/handlers.apiSendMessageRequest'
+      - description: Target phone number
+        in: formData
+        name: phone
+        type: string
+      - description: Telegram Chat ID
+        in: formData
+        name: chat_id
+        type: string
+      - description: user, chat, channel
+        in: formData
+        name: peer_type
+        type: string
+      - description: Telegram access hash
+        in: formData
+        name: access_hash
+        type: integer
+      - description: Message text
+        in: formData
+        name: message
+        type: string
+      - description: Media caption
+        in: formData
+        name: caption
+        type: string
+      - description: Media file
+        in: formData
+        name: file
+        type: file
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/handlers.apiSendMessageResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/handlers.apiErrorResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/handlers.apiErrorResponse'
+        "422":
+          description: Unprocessable Entity
+          schema:
+            $ref: '#/definitions/handlers.apiErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/handlers.apiErrorResponse'
+      summary: Send Telegram message
+      tags:
+      - API
+swagger: "2.0"

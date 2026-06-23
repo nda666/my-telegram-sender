@@ -25,6 +25,22 @@ type apiTelegramError struct {
 	HTTPStatus int
 }
 
+type apiSendMessageResponse struct {
+	Message string `json:"message" example:"Message sent"`
+}
+
+type apiSendMessageRequest struct {
+	Phone         string `json:"phone" example:"6281234567890"`
+	ChatID        string `json:"chat_id" example:"123456789"`
+	Message       string `json:"message" example:"Hello World"`
+	PeerType      string `json:"peer_type" example:"user"`
+	AccessHash    int64  `json:"access_hash" example:"0"`
+	Caption       string `json:"caption" example:"Photo Caption"`
+	MediaURL      string `json:"media_url" example:"https://example.com/photo.jpg"`
+	MediaBase64   string `json:"media_base64"`
+	MediaFilename string `json:"media_filename" example:"photo.jpg"`
+}
+
 func telegramErrorToAPI(err error) apiTelegramError {
 	if err == nil {
 		return apiTelegramError{Message: "", Type: "terserah_yang_penting_sesuai_dengan_telegram", Detail: nil, HTTPStatus: http.StatusInternalServerError}
@@ -59,27 +75,42 @@ func jsonErrorTyped(w http.ResponseWriter, msg, errorType string, detail map[str
 	_ = json.NewEncoder(w).Encode(resp)
 }
 
-// APISendMessage — POST /api/send
-// Header: X-Api-Key: <uuid>
+// APISendMessage godoc
 //
-// JSON body (text only):
+// @Summary Send Telegram message
+// @Description Send text, photo, video, audio, or document using a registered device API key.
+// @Description
+// @Description Authentication:
+// @Description - Header: X-Api-Key
+// @Description - Or query parameter: api_key
 //
-//	{ "chat_id": "123", "message": "Hello!", "peer_type": "user", "access_hash": 0 }
+// @Tags API
 //
-// JSON body (media via URL):
+// @Accept application/json
+// @Accept multipart/form-data
 //
-//	{ "chat_id": "123", "peer_type": "user", "access_hash": 0,
-//	  "media_url": "https://example.com/photo.jpg", "caption": "look!" }
+// @Produce application/json
 //
-// JSON body (media via base64):
+// @Param X-Api-Key header string true "Device API Key"
+// @Param api_key query string false "Device API Key"
 //
-//	{ "chat_id": "123", "peer_type": "user", "access_hash": 0,
-//	  "media_base64": "<base64>", "media_filename": "photo.jpg", "caption": "look!" }
+// @Param request body apiSendMessageRequest false "JSON Request"
 //
-// Multipart form-data:
+// @Param phone formData string false "Target phone number"
+// @Param chat_id formData string false "Telegram Chat ID"
+// @Param peer_type formData string false "user, chat, channel"
+// @Param access_hash formData integer false "Telegram access hash"
+// @Param message formData string false "Message text"
+// @Param caption formData string false "Media caption"
+// @Param file formData file false "Media file"
 //
-//	fields: chat_id, peer_type, access_hash, caption, message
-//	file:   field name "file"
+// @Success 200 {object} apiSendMessageResponse
+// @Failure 400 {object} apiErrorResponse
+// @Failure 401 {object} apiErrorResponse
+// @Failure 422 {object} apiErrorResponse
+// @Failure 500 {object} apiErrorResponse
+//
+// @Router /api/send [post]
 func (h *Handlers) APISendMessage(w http.ResponseWriter, r *http.Request) {
 	apiKey := r.Header.Get("X-Api-Key")
 	if apiKey == "" {
