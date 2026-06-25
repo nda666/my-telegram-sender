@@ -10,6 +10,10 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+
+	"errors"
+
+	"github.com/gotd/td/tgerr"
 )
 
 type apiErrorResponse struct {
@@ -41,12 +45,14 @@ type apiSendMessageRequest struct {
 	MediaFilename string `json:"media_filename" example:"photo.jpg"`
 }
 
+const DefaultTelegramErrorType = "telegram_error"
+
 func telegramErrorToAPI(err error) apiTelegramError {
 	if err == nil {
-		return apiTelegramError{Message: "", Type: "terserah_yang_penting_sesuai_dengan_telegram", Detail: nil, HTTPStatus: http.StatusInternalServerError}
+		return apiTelegramError{Message: "", Type: "unknown_error", Detail: nil, HTTPStatus: http.StatusInternalServerError}
 	}
 
-	// If telegram service returns a typed error, use it.
+	// If telegram service returns a typed error, use it (custom typed interface tetap dipertahankan).
 	type typed interface {
 		APIError() (msg string, errType string, detail map[string]any, httpStatus int)
 	}
@@ -56,7 +62,7 @@ func telegramErrorToAPI(err error) apiTelegramError {
 			msg = err.Error()
 		}
 		if errType == "" {
-			errType = "terserah_yang_penting_sesuai_dengan_telegram"
+			errType = "telegram_error"
 		}
 		if httpStatus == 0 {
 			httpStatus = http.StatusInternalServerError
@@ -64,7 +70,32 @@ func telegramErrorToAPI(err error) apiTelegramError {
 		return apiTelegramError{Message: msg, Type: errType, Detail: detail, HTTPStatus: httpStatus}
 	}
 
-	return apiTelegramError{Message: err.Error(), Type: "terserah_yang_penting_sesuai_dengan_telegram", Detail: nil, HTTPStatus: http.StatusInternalServerError}
+	// Cek apakah ini error RPC dari Telegram (gotd)
+	var rpcErr *tgerr.Error
+	if errors.As(err, &rpcErr) {
+		httpStatus := http.StatusInternalServerError
+		switch rpcErr.Code {
+		case 420:
+			httpStatus = http.StatusTooManyRequests
+		case 400:
+			httpStatus = http.StatusBadRequest
+		case 401:
+			httpStatus = http.StatusUnauthorized
+		case 403:
+			httpStatus = http.StatusForbidden
+		case 404:
+			httpStatus = http.StatusNotFound
+		}
+
+		return apiTelegramError{
+			Message:    rpcErr.Message,
+			Type:       rpcErr.Type, // langsung ambil dari gotd, ex: "FLOOD_WAIT_X", "PEER_ID_INVALID"
+			Detail:     map[string]any{"code": rpcErr.Code},
+			HTTPStatus: httpStatus,
+		}
+	}
+
+	return apiTelegramError{Message: err.Error(), Type: "unknown_error", Detail: nil, HTTPStatus: http.StatusInternalServerError}
 }
 
 func jsonErrorTyped(w http.ResponseWriter, msg, errorType string, detail map[string]any, code int) {
