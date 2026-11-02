@@ -13,6 +13,7 @@ import {
     Radio,
     Select,
     Space,
+    Switch,
     Tabs,
     Typography,
 } from 'antd';
@@ -25,8 +26,10 @@ import {
     IdcardOutlined,
     LinkOutlined,
     MobileOutlined,
+    RobotOutlined,
     SendOutlined,
     UploadOutlined,
+    UserOutlined,
 } from '@ant-design/icons';
 import {
     Link,
@@ -40,6 +43,10 @@ type Device = {
     name: string;
     phone: string;
     hasSession: boolean;
+    hasBot: boolean;
+    botUsername?: string;
+    botFirstName?: string;
+    botEnabled?: boolean;
     telegramFirstName: string;
     telegramLastName: string;
     avatarColor: string;
@@ -53,6 +60,7 @@ type PageProps = {
 
 type Mode = 'text' | 'file' | 'url' | 'base64';
 type TargetMode = 'chat_id' | 'phone';
+type SenderMode = 'user' | 'bot';
 
 type Result = { ok: boolean; status: number; data: unknown } | null;
 
@@ -61,6 +69,9 @@ const PEER_TYPES = ['user', 'chat', 'channel'];
 export default function DeviceLiveTest() {
     const { device, error: propError } = usePage<PageProps>().props;
 
+    const [senderMode, setSenderMode] = useState<SenderMode>(
+        device.hasBot && device.botEnabled && !device.hasSession ? 'bot' : 'user'
+    );
     const [mode, setMode] = useState<Mode>('text');
     const [targetMode, setTargetMode] = useState<TargetMode>('chat_id');
 
@@ -73,6 +84,51 @@ export default function DeviceLiveTest() {
     const [caption, setCaption] = useState('');
     const [mediaUrl, setMediaUrl] = useState('');
     const [file, setFile] = useState<File | null>(null);
+
+    const [withButtons, setWithButtons] = useState(false);
+    const [buttonType, setButtonType] = useState<'inline' | 'reply' | 'force_reply'>('inline');
+    const [buttonsJson, setButtonsJson] = useState(
+        JSON.stringify([
+            [
+                { text: '💰 Cek Saldo', callback_data: 'cek_saldo' },
+                { text: '📜 Riwayat', callback_data: 'riwayat_trx' }
+            ],
+            [
+                { text: '🌐 Kunjungi Website', url: 'https://google.com' }
+            ]
+        ], null, 2)
+    );
+
+    const handleButtonTypeChange = (type: 'inline' | 'reply' | 'force_reply') => {
+        setButtonType(type);
+        if (type === 'inline') {
+            setButtonsJson(JSON.stringify([
+                [
+                    { text: '💰 Cek Saldo', callback_data: 'cek_saldo' },
+                    { text: '📜 Riwayat', callback_data: 'riwayat_trx' }
+                ],
+                [
+                    { text: '🌐 Kunjungi Website', url: 'https://google.com' }
+                ]
+            ], null, 2));
+        } else if (type === 'reply') {
+            setButtonsJson(JSON.stringify([
+                [
+                    { text: 'Cek Saldo' },
+                    { text: 'Bantuan' }
+                ],
+                [
+                    { text: 'Hubungi Admin' }
+                ]
+            ], null, 2));
+        } else {
+            setButtonsJson(JSON.stringify([
+                [
+                    { text: 'Ketik pesan balasan Anda di sini...' }
+                ]
+            ], null, 2));
+        }
+    };
 
     const [sending, setSending] = useState(false);
     const [result, setResult] = useState<Result>(null);
@@ -96,11 +152,26 @@ export default function DeviceLiveTest() {
         setError(null);
         setResult(null);
 
+        let parsedButtons: unknown = undefined;
+        if (withButtons && buttonsJson.trim()) {
+            try {
+                parsedButtons = JSON.parse(buttonsJson);
+            } catch (err: unknown) {
+                setError('Format JSON Buttons tidak valid');
+                setSending(false);
+                return;
+            }
+        }
+
         try {
             let res: Response;
+            const sendUrl = senderMode === 'bot' ? '/api/send?bot=1' : '/api/send';
 
             if (mode === 'file' && file) {
                 const fd = new FormData();
+                if (senderMode === 'bot') {
+                    fd.append('bot', '1');
+                }
                 if (targetMode === 'phone') {
                     fd.append('phone', phone);
                 } else {
@@ -111,13 +182,20 @@ export default function DeviceLiveTest() {
                 fd.append('caption', caption);
                 fd.append('message', message);
                 fd.append('file', file);
-                res = await fetch('/api/send', {
+                if (withButtons && parsedButtons) {
+                    fd.append('button_type', buttonType);
+                    fd.append('buttons', JSON.stringify(parsedButtons));
+                }
+                res = await fetch(sendUrl, {
                     method: 'POST',
                     headers: { 'X-Api-Key': apiKey },
                     body: fd,
                 });
             } else {
                 const body: Record<string, unknown> = {};
+                if (senderMode === 'bot') {
+                    body.bot = 1;
+                }
                 if (targetMode === 'phone') {
                     body.phone = phone;
                 } else {
@@ -132,7 +210,11 @@ export default function DeviceLiveTest() {
                     body.media_filename = file.name;
                     body.caption = caption;
                 }
-                res = await fetch('/api/send', {
+                if (withButtons && parsedButtons) {
+                    body.button_type = buttonType;
+                    body.buttons = parsedButtons;
+                }
+                res = await fetch(sendUrl, {
                     method: 'POST',
                     headers: { 'X-Api-Key': apiKey, 'Content-Type': 'application/json' },
                     body: JSON.stringify(body),
@@ -150,21 +232,27 @@ export default function DeviceLiveTest() {
 
     const curlPreview = (() => {
         const h = `-H "X-Api-Key: ${apiKey}"`;
-        const base = `curl -X POST /api/send \\\n  ${h}`;
+        const botParam = senderMode === 'bot' ? '?bot=1' : '';
+        const base = `curl -X POST "/api/send${botParam}" \\\n  ${h}`;
+        const botBody = senderMode === 'bot' ? '"bot":1,' : '';
         const target = targetMode === 'phone'
-            ? `"phone":"${phone}"`
-            : `"chat_id":"${chatId}","peer_type":"${peerType}","access_hash":${accessHash}`;
+            ? `${botBody}"phone":"${phone}"`
+            : `${botBody}"chat_id":"${chatId}","peer_type":"${peerType}","access_hash":${accessHash}`;
+        const botF = senderMode === 'bot' ? '-F "bot=1" ' : '';
         const targetF = targetMode === 'phone'
-            ? `-F "phone=${phone}"`
-            : `-F "chat_id=${chatId}" -F "peer_type=${peerType}" -F "access_hash=${accessHash}"`;
+            ? `${botF}-F "phone=${phone}"`
+            : `${botF}-F "chat_id=${chatId}" -F "peer_type=${peerType}" -F "access_hash=${accessHash}"`;
+
+        const btnJsonStr = withButtons ? `,"button_type":"${buttonType}","buttons":${buttonsJson.replace(/\n\s*/g, '')}` : '';
+        const btnFormStr = withButtons ? ` -F "button_type=${buttonType}" -F 'buttons=${buttonsJson.replace(/\n\s*/g, '')}'` : '';
 
         if (mode === 'text')
-            return `${base} \\\n  -H "Content-Type: application/json" \\\n  -d '{${target},"message":"${message}"}'`;
+            return `${base} \\\n  -H "Content-Type: application/json" \\\n  -d '{${target},"message":"${message}"${btnJsonStr}}'`;
         if (mode === 'url')
-            return `${base} \\\n  -H "Content-Type: application/json" \\\n  -d '{${target},"media_url":"${mediaUrl}","caption":"${caption}"}'`;
+            return `${base} \\\n  -H "Content-Type: application/json" \\\n  -d '{${target},"media_url":"${mediaUrl}","caption":"${caption}"${btnJsonStr}}'`;
         if (mode === 'file')
-            return `${base} \\\n  ${targetF} \\\n  -F "caption=${caption}" -F "file=@${file?.name ?? 'file.jpg'}"`;
-        return `${base} \\\n  -H "Content-Type: application/json" \\\n  -d '{${target},"media_base64":"<base64>","media_filename":"${file?.name ?? 'file.jpg'}","caption":"${caption}"}'`;
+            return `${base} \\\n  ${targetF}${btnFormStr} \\\n  -F "caption=${caption}" -F "file=@${file?.name ?? 'file.jpg'}"`;
+        return `${base} \\\n  -H "Content-Type: application/json" \\\n  -d '{${target},"media_base64":"<base64>","media_filename":"${file?.name ?? 'file.jpg'}","caption":"${caption}"${btnJsonStr}}'`;
     })();
 
     const label = (text: string) => (
@@ -195,21 +283,62 @@ export default function DeviceLiveTest() {
                     {/* Left: form */}
                     <div style={{ flex: 1, background: '#fff', borderRadius: 8, padding: 24, boxShadow: '0 2px 8px rgba(0,0,0,0.06)' }}>
                         {/* Device info */}
-                        <Flex align="center" gap={12} style={{ marginBottom: 24, paddingBottom: 16, borderBottom: '1px solid #f0f0f0' }}>
-                            <Badge status="success">
-                                <Avatar size={40} style={{ background: device.avatarColor }}>
-                                    {device.telegramFirstName?.charAt(0)?.toUpperCase()}
-                                    {device.telegramLastName?.charAt(0)?.toUpperCase()}
+                        <Flex align="center" gap={12} style={{ marginBottom: 20, paddingBottom: 16, borderBottom: '1px solid #f0f0f0' }}>
+                            <Badge status={senderMode === 'bot' ? (device.hasBot && device.botEnabled ? 'processing' : 'default') : (device.hasSession ? 'success' : 'default')}>
+                                <Avatar size={40} style={{ background: senderMode === 'bot' ? '#1677ff' : device.avatarColor }}>
+                                    {senderMode === 'bot' ? <RobotOutlined /> : (
+                                        <>
+                                            {device.telegramFirstName?.charAt(0)?.toUpperCase()}
+                                            {device.telegramLastName?.charAt(0)?.toUpperCase()}
+                                        </>
+                                    )}
                                 </Avatar>
                             </Badge>
                             <Flex vertical gap={0}>
-                                <Typography.Text strong>{device.telegramFirstName} {device.telegramLastName}</Typography.Text>
-                                <Typography.Text type="secondary" style={{ fontSize: 12 }}>{device.phone}</Typography.Text>
+                                <Typography.Text strong>
+                                    {senderMode === 'bot'
+                                        ? (device.botFirstName || (device.botUsername ? `@${device.botUsername}` : 'Telegram Bot'))
+                                        : `${device.telegramFirstName || device.name} ${device.telegramLastName || ''}`}
+                                </Typography.Text>
+                                <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+                                    {senderMode === 'bot'
+                                        ? (device.botUsername ? `@${device.botUsername}` : 'Bot Token MTProto')
+                                        : device.phone}
+                                </Typography.Text>
                             </Flex>
                             <Flex vertical gap={0} style={{ marginLeft: 'auto', textAlign: 'right' }}>
                                 {label('API Key')}
                                 <Typography.Text code copyable style={{ fontSize: 11 }}>{apiKey}</Typography.Text>
                             </Flex>
+                        </Flex>
+
+                        {/* Sender mode selection */}
+                        <Flex gap={8} align="center" style={{ marginBottom: 16, background: '#f8fafc', padding: '10px 14px', borderRadius: 8, border: '1px solid #e2e8f0' }}>
+                            {label('Kirim sebagai:')}
+                            <Radio.Group
+                                value={senderMode}
+                                onChange={e => setSenderMode(e.target.value)}
+                                optionType="button"
+                                buttonStyle="solid"
+                                size="small"
+                                options={[
+                                    {
+                                        label: <><UserOutlined /> User Account {device.hasSession ? '' : '(Belum Login)'}</>,
+                                        value: 'user',
+                                        disabled: !device.hasSession,
+                                    },
+                                    {
+                                        label: <><RobotOutlined /> Bot MTProto {device.botUsername ? `(@${device.botUsername})` : (device.hasBot && device.botEnabled ? '(Aktif)' : '(Belum Diatur)')}</>,
+                                        value: 'bot',
+                                        disabled: !device.hasBot || !device.botEnabled,
+                                    },
+                                ]}
+                            />
+                            {senderMode === 'bot' ? (
+                                <Badge status="processing" text={<span style={{ fontSize: 11, color: '#1677ff', fontWeight: 600 }}>Bot MTProto (?bot=1)</span>} />
+                            ) : (
+                                <Badge status="success" text={<span style={{ fontSize: 11, color: '#52c41a', fontWeight: 600 }}>Userbot Session</span>} />
+                            )}
                         </Flex>
 
                         {/* Target mode toggle */}
@@ -324,6 +453,48 @@ export default function DeviceLiveTest() {
                                     <Input value={caption} onChange={e => setCaption(e.target.value)} placeholder="optional..." />
                                 </>
                             )}
+
+                            {/* Buttons Section */}
+                            <div style={{ borderTop: '1px solid #f0f0f0', paddingTop: 12, marginTop: 4 }}>
+                                <Flex justify="space-between" align="center" style={{ marginBottom: withButtons ? 12 : 0 }}>
+                                    <Space align="center">
+                                        <Switch
+                                            size="small"
+                                            checked={withButtons}
+                                            onChange={setWithButtons}
+                                        />
+                                        <Typography.Text strong style={{ fontSize: 13 }}>
+                                            Sertakan Tombol (Buttons)
+                                        </Typography.Text>
+                                    </Space>
+                                    {withButtons && (
+                                        <Radio.Group
+                                            value={buttonType}
+                                            onChange={e => handleButtonTypeChange(e.target.value)}
+                                            optionType="button"
+                                            buttonStyle="solid"
+                                            size="small"
+                                            options={[
+                                                { label: 'Inline Keyboard (Callback & URL)', value: 'inline' },
+                                                { label: 'Reply Keyboard', value: 'reply' },
+                                                { label: 'Force Reply', value: 'force_reply' },
+                                            ]}
+                                        />
+                                    )}
+                                </Flex>
+
+                                {withButtons && (
+                                    <Flex vertical gap={8} style={{ marginTop: 8 }}>
+                                        {label('Struktur JSON Buttons (1D array atau 2D array baris)')}
+                                        <Input.TextArea
+                                            rows={5}
+                                            value={buttonsJson}
+                                            onChange={e => setButtonsJson(e.target.value)}
+                                            style={{ fontFamily: 'monospace', fontSize: 12 }}
+                                        />
+                                    </Flex>
+                                )}
+                            </div>
 
                             <Button
                                 type="primary"

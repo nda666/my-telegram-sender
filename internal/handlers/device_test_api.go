@@ -18,8 +18,8 @@ func (h *Handlers) DeviceTestApi(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var fetchError string
-	if !device.HasSession() { // fix: !HasSession
-		fetchError = "Device belum terhubung ke Telegram. Silakan buat session terlebih dahulu."
+	if !device.HasSession() && (!device.HasBot() || !device.BotEnabled) {
+		fetchError = "Device belum terhubung ke Telegram. Silakan buat session akun Telegram atau hubungkan Bot terlebih dahulu."
 	}
 
 	h.render(w, r, "Devices/TestApi", map[string]any{

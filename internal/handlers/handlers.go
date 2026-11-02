@@ -2,7 +2,6 @@ package handlers
 
 import (
 	"encoding/json"
-	"fmt"
 	"log"
 	"net/http"
 	"strconv"
@@ -19,8 +18,9 @@ type Handlers struct {
 	Users    *services.UserService
 	Devices  *services.DeviceService
 	Logs     *services.LogService
-	Telegram *telegram.Service
-	Pending  *auth.PendingStore
+	Telegram    *telegram.Service
+	Pending     *auth.PendingStore
+	RateLimiter *RateLimiter
 }
 
 func (h *Handlers) render(w http.ResponseWriter, r *http.Request, page string, props map[string]any) {
@@ -35,8 +35,7 @@ func (h *Handlers) render(w http.ResponseWriter, r *http.Request, page string, p
 }
 
 func (h *Handlers) redirect(w http.ResponseWriter, r *http.Request, url string) {
-	fmt.Printf("Header: %s", r.Header.Get(inertia.HeaderInertia))
-	h.Inertia.Location(w, r, url)
+	http.Redirect(w, r, url, http.StatusSeeOther)
 }
 
 func parseID(r *http.Request, key string) (uint, bool) {

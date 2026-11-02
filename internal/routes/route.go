@@ -39,6 +39,18 @@ func Register(mux *http.ServeMux, h *handlers.Handlers, i *inertia.Inertia, sess
 	mux.Handle("GET /devices/{id}/inbox/media", withAuth(h.DeviceMediaDownload))
 	mux.Handle("GET /devices/{id}/profile", withAuth(h.DeviceGetProfile))
 	mux.Handle("GET /devices/{id}/test-api", withAuth(h.DeviceTestApi))
+	mux.Handle("GET /devices/{id}/bot", withAuth(h.DeviceBotShow))
+	mux.Handle("POST /devices/{id}/bot/connect", withAuth(h.DeviceBotConnect))
+	mux.Handle("POST /devices/{id}/bot/disconnect", withAuth(h.DeviceBotDisconnect))
+	mux.Handle("POST /devices/{id}/bot/toggle", withAuth(h.DeviceBotToggle))
+	mux.Handle("GET /devices/{id}/bot/commands", withAuth(h.DeviceBotGetCommands))
+	mux.Handle("POST /devices/{id}/bot/commands", withAuth(h.DeviceBotSetCommands))
+	mux.Handle("POST /devices/{id}/bot/menu-config", withAuth(h.DeviceBotUpdateMenuConfig))
+	mux.Handle("POST /devices/{id}/bot/start-config", withAuth(h.DeviceBotUpdateStartConfig))
+	mux.Handle("GET /devices/{id}/webhook", withAuth(h.DeviceWebhookShow))
+	mux.Handle("POST /devices/{id}/webhook", withAuth(h.DeviceWebhookUpdate))
+	mux.Handle("POST /devices/{id}/webhook/test", withAuth(h.DeviceWebhookTest))
+	mux.Handle("GET /devices/{id}/logs", withAuth(h.DeviceLogs))
 
 	// Contacts CRUD
 	mux.Handle("GET /devices/{id}/contacts", withAuth(h.IndexContacts))
@@ -53,6 +65,12 @@ func Register(mux *http.ServeMux, h *handlers.Handlers, i *inertia.Inertia, sess
 	mux.Handle("GET /settings/password", withAuth(h.ShowChangePassword))
 	mux.Handle("POST /settings/password", withAuth(h.ChangePassword))
 
-	// Public API — pakai api key, tidak perlu session auth
-	mux.Handle("POST /api/send", http.HandlerFunc(h.APISendMessage))
+	// Public API — pakai api key & rate limit
+	if h.RateLimiter != nil {
+		mux.Handle("POST /api/send", h.RateLimiter.Middleware(http.HandlerFunc(h.APISendMessage)))
+		mux.Handle("GET /api/callback", h.RateLimiter.Middleware(http.HandlerFunc(h.APICallbackHandler)))
+	} else {
+		mux.Handle("POST /api/send", http.HandlerFunc(h.APISendMessage))
+		mux.Handle("GET /api/callback", http.HandlerFunc(h.APICallbackHandler))
+	}
 }

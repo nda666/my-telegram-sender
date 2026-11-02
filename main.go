@@ -1,11 +1,13 @@
 package main
 
 import (
+	"context"
 	"embed"
 	"fmt"
 	"log"
 	"net/http"
 	"os"
+	"time"
 
 	_ "ariga.io/atlas-provider-gorm/gormschema"
 
@@ -25,6 +27,7 @@ import (
 	"github.com/tiar/telegram-sender/internal/services"
 	"github.com/tiar/telegram-sender/internal/telegram"
 	"go.uber.org/zap"
+	"golang.org/x/time/rate"
 )
 
 //go:embed all:public
@@ -80,14 +83,18 @@ func main() {
 		db.AutoMigrate(&models.Device{}, &models.Log{}, &models.User{})
 	}
 
+	tgSvc.Webhook().StartAll(context.Background())
+	logSvc.StartAutoCleanup(context.Background(), cfg.LogRetentionDays, 12*time.Hour)
+
 	h := &handlers.Handlers{
-		Inertia:  i,
-		Session:  sessions,
-		Users:    userSvc,
-		Devices:  deviceSvc,
-		Logs:     logSvc,
-		Telegram: tgSvc,
-		Pending:  auth.NewPendingStore(),
+		Inertia:     i,
+		Session:     sessions,
+		Users:       userSvc,
+		Devices:     deviceSvc,
+		Logs:        logSvc,
+		Telegram:    tgSvc,
+		Pending:     auth.NewPendingStore(),
+		RateLimiter: handlers.NewRateLimiter(rate.Limit(cfg.APIRateLimitRPS), cfg.APIRateLimitBurst, logSvc),
 	}
 
 	mux := http.NewServeMux()

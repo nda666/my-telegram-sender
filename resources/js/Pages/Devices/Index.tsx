@@ -17,10 +17,13 @@ import {
   ApiOutlined,
   DeleteOutlined,
   EditOutlined,
+  FileTextOutlined,
+  GlobalOutlined,
   KeyOutlined,
   MessageOutlined,
   MoreOutlined,
   PlusOutlined,
+  RobotOutlined,
   SyncOutlined,
   UserOutlined,
 } from '@ant-design/icons';
@@ -139,6 +142,24 @@ export default function DevicesIndex() {
               </Link>
             ),
           },
+          {
+            key: 'bot',
+            icon: <RobotOutlined />,
+            label: (
+              <Link href={`/devices/${row.id}/bot`}>
+                Bot
+              </Link>
+            ),
+          },
+          {
+            key: 'webhook',
+            icon: <GlobalOutlined />,
+            label: (
+              <Link href={`/devices/${row.id}/webhook`}>
+                Webhook
+              </Link>
+            ),
+          },
         ];
 
         if (row.hasSession) {
@@ -180,6 +201,16 @@ export default function DevicesIndex() {
             },
           );
         }
+
+        items.push({
+          key: 'logs',
+          icon: <FileTextOutlined />,
+          label: (
+            <Link href={`/devices/${row.id}/logs`}>
+              Logs
+            </Link>
+          ),
+        });
 
         items.push({ type: 'divider' });
 

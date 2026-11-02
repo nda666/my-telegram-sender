@@ -1,6 +1,8 @@
 package services
 
 import (
+	"strings"
+
 	"github.com/google/uuid"
 	"github.com/tiar/telegram-sender/internal/models"
 	"gorm.io/gorm"
@@ -130,3 +132,76 @@ func (s *DeviceService) FindByAPIKey(apiKey string) (*models.Device, error) {
 	}
 	return &d, nil
 }
+
+func (s *DeviceService) UpdateWebhook(id uint, webhookURL, webhookSecret string, webhookEnabled bool) error {
+	return s.db.Model(&models.Device{}).Where("id = ?", id).Updates(map[string]any{
+		"webhook_url":     webhookURL,
+		"webhook_secret":  webhookSecret,
+		"webhook_enabled": webhookEnabled,
+	}).Error
+}
+
+func (s *DeviceService) UpdateBot(id uint, botToken, botUsername, botFirstName string, botID int64, botEnabled bool, botSessionData []byte) error {
+	return s.db.Model(&models.Device{}).Where("id = ?", id).Updates(map[string]any{
+		"bot_token":        botToken,
+		"bot_username":     botUsername,
+		"bot_first_name":   botFirstName,
+		"bot_id":           botID,
+		"bot_enabled":      botEnabled,
+		"bot_session_data": botSessionData,
+	}).Error
+}
+
+func (s *DeviceService) ClearBot(id uint) error {
+	return s.db.Model(&models.Device{}).Where("id = ?", id).Updates(map[string]any{
+		"bot_token":        "",
+		"bot_username":     "",
+		"bot_first_name":   "",
+		"bot_id":           0,
+		"bot_enabled":      false,
+		"bot_session_data": nil,
+	}).Error
+}
+
+func (s *DeviceService) ToggleBot(id uint, enabled bool) error {
+	return s.db.Model(&models.Device{}).Where("id = ?", id).Update("bot_enabled", enabled).Error
+}
+
+func (s *DeviceService) UpdateBotCommands(id uint, commandsJSON string) error {
+	return s.db.Model(&models.Device{}).Where("id = ?", id).Update("bot_commands_json", commandsJSON).Error
+}
+
+func (s *DeviceService) UpdateBotMenuConfig(id uint, menuSource, menuURL string) error {
+	return s.db.Model(&models.Device{}).Where("id = ?", id).Updates(map[string]any{
+		"bot_menu_source": menuSource,
+		"bot_menu_url":    menuURL,
+	}).Error
+}
+
+func (s *DeviceService) UpdateBotStartConfig(id uint, requestPhone bool, startMessage, phoneBtnText, receivedMsg string) error {
+	return s.db.Model(&models.Device{}).Where("id = ?", id).Updates(map[string]any{
+		"bot_request_phone_on_start": requestPhone,
+		"bot_start_message":          startMessage,
+		"bot_phone_button_text":      phoneBtnText,
+		"bot_phone_received_message": receivedMsg,
+	}).Error
+}
+
+func (s *DeviceService) ListActiveWebhookDevices() ([]models.Device, error) {
+	var allDevices []models.Device
+	if err := s.db.Find(&allDevices).Error; err != nil {
+		return nil, err
+	}
+
+	var active []models.Device
+	for _, d := range allDevices {
+		hasUserOrBot := d.HasSession() || (d.HasBot() && d.BotEnabled)
+		if hasUserOrBot && d.WebhookEnabled && strings.TrimSpace(d.WebhookURL) != "" {
+			active = append(active, d)
+		}
+	}
+	return active, nil
+}
+
+
+

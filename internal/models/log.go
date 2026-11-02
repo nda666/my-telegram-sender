@@ -8,5 +8,7 @@ type Log struct {
 	Level     string    `gorm:"size:20;default:info" json:"level"`
 	Action    string    `gorm:"size:50" json:"action"`
 	Message   string    `gorm:"type:text" json:"message"`
-	CreatedAt time.Time `json:"createdAt"`
+	IP        string    `gorm:"size:50" json:"ip"`
+	Data      string    `gorm:"type:longtext" json:"data"`
+	CreatedAt time.Time `gorm:"index" json:"createdAt"`
 }

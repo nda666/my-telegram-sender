@@ -4,13 +4,13 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/binary"
+	"encoding/json"
 	"fmt"
 	"io"
 	"strings"
 	"time"
 
 	"github.com/go-faster/errors"
-	"github.com/gotd/contrib/middleware/floodwait"
 	"github.com/gotd/contrib/middleware/ratelimit"
 	"github.com/gotd/td/telegram"
 	"github.com/gotd/td/telegram/auth"
@@ -30,7 +30,7 @@ type Service struct {
 	db      *gorm.DB
 	devices *services.DeviceService
 	logs    *services.LogService
-	waiter  *floodwait.Waiter
+	webhook *WebhookManager
 }
 
 func NewService(cfg config.Config, db *gorm.DB, devices *services.DeviceService, logs *services.LogService) *Service {
@@ -39,15 +39,19 @@ func NewService(cfg config.Config, db *gorm.DB, devices *services.DeviceService,
 		db:      db,
 		devices: devices,
 		logs:    logs,
-		waiter:  floodwait.NewWaiter(),
+		webhook: NewWebhookManager(cfg, db, devices, logs),
 	}
 }
+
+func (s *Service) Webhook() *WebhookManager {
+	return s.webhook
+}
+
 
 func (s *Service) client(deviceID uint) *telegram.Client {
 	return telegram.NewClient(s.cfg.AppID, s.cfg.AppHash, telegram.Options{
 		SessionStorage: NewDeviceSessionStorage(s.db, deviceID),
 		Middlewares: []telegram.Middleware{
-			s.waiter,
 			ratelimit.New(rate.Every(100*time.Millisecond), 5),
 		},
 	})
@@ -55,10 +59,9 @@ func (s *Service) client(deviceID uint) *telegram.Client {
 
 func (s *Service) Run(ctx context.Context, deviceID uint, fn func(ctx context.Context, client *telegram.Client, api *tg.Client) error) error {
 	client := s.client(deviceID)
-	return s.waiter.Run(ctx, func(ctx context.Context) error {
-		return client.Run(ctx, func(ctx context.Context) error {
-			return fn(ctx, client, client.API())
-		})
+
+	return client.Run(ctx, func(ctx context.Context) error {
+		return fn(ctx, client, client.API())
 	})
 }
 
@@ -163,6 +166,7 @@ func (s *Service) persistDevice(ctx context.Context, deviceID uint, client *tele
 		return err
 	}
 
+	s.webhook.RestartDevice(deviceID)
 	s.logs.Write("info", "session.created", fmt.Sprintf("Session Telegram: %s (%s)", user.FirstName, user.Phone), &deviceID)
 	return nil
 }
@@ -479,7 +483,7 @@ func (s *Service) GetMessages(ctx context.Context, deviceID uint, peerType strin
 	return items, err
 }
 
-func (s *Service) SendTelegramMessage(ctx context.Context, deviceID uint, peerType string, peerID int64, accessHash int64, text string) error {
+func (s *Service) SendTelegramMessage(ctx context.Context, deviceID uint, peerType string, peerID int64, accessHash int64, text string, replyMarkup tg.ReplyMarkupClass) error {
 	return s.Run(ctx, deviceID, func(ctx context.Context, client *telegram.Client, api *tg.Client) error {
 		var peer tg.InputPeerClass
 		switch peerType {
@@ -505,10 +509,14 @@ func (s *Service) SendTelegramMessage(ctx context.Context, deviceID uint, peerTy
 		_, _ = rand.Read(b[:])
 		randomID := int64(binary.BigEndian.Uint64(b[:]))
 
+		text, entities := parseWAFormat(text)
+
 		_, err := api.MessagesSendMessage(ctx, &tg.MessagesSendMessageRequest{
-			Peer:     peer,
-			Message:  text,
-			RandomID: randomID,
+			Peer:        peer,
+			Message:     text,
+			RandomID:    randomID,
+			Entities:    entities,
+			ReplyMarkup: replyMarkup,
 		})
 		return err
 	})
@@ -527,6 +535,7 @@ func (s *Service) SendTelegramMedia(
 	filename string,
 	mtype string,
 	caption string,
+	replyMarkup tg.ReplyMarkupClass,
 ) error {
 	return s.Run(ctx, deviceID, func(ctx context.Context, client *telegram.Client, api *tg.Client) error {
 		var peer tg.InputPeerClass
@@ -592,11 +601,15 @@ func (s *Service) SendTelegramMedia(
 		_, _ = rand.Read(b[:])
 		randomID := int64(binary.BigEndian.Uint64(b[:]))
 
+		caption, entities := parseWAFormat(caption)
+
 		_, err = api.MessagesSendMedia(ctx, &tg.MessagesSendMediaRequest{
-			Peer:     peer,
-			Media:    inputMedia,
-			Message:  caption, // caption
-			RandomID: randomID,
+			Peer:        peer,
+			Media:       inputMedia,
+			Message:     caption, // caption
+			RandomID:    randomID,
+			Entities:    entities,
+			ReplyMarkup: replyMarkup,
 		})
 		return err
 	})
@@ -604,7 +617,7 @@ func (s *Service) SendTelegramMedia(
 
 // SendTelegramMessageByPhone resolves phone number via contacts.ImportContacts
 // lalu kirim pesan. Contact sementara, dihapus setelah send.
-func (s *Service) SendTelegramMessageByPhone(ctx context.Context, deviceID uint, phone, text string) error {
+func (s *Service) SendTelegramMessageByPhone(ctx context.Context, deviceID uint, phone, text string, replyMarkup tg.ReplyMarkupClass) error {
 	return s.Run(ctx, deviceID, func(ctx context.Context, client *telegram.Client, api *tg.Client) error {
 		// 1. normalize: pastikan ada prefix +
 		if !strings.HasPrefix(phone, "+") {
@@ -638,9 +651,6 @@ func (s *Service) SendTelegramMessageByPhone(ctx context.Context, deviceID uint,
 
 		text, entities := parseWAFormat(text)
 
-		if err != nil {
-			return err
-		}
 		// 4. kirim pesan
 		var b [8]byte
 		_, _ = rand.Read(b[:])
@@ -651,9 +661,10 @@ func (s *Service) SendTelegramMessageByPhone(ctx context.Context, deviceID uint,
 				UserID:     target.ID,
 				AccessHash: target.AccessHash,
 			},
-			Message:  text,
-			RandomID: randomID,
-			Entities: entities,
+			Message:     text,
+			RandomID:    randomID,
+			Entities:    entities,
+			ReplyMarkup: replyMarkup,
 		})
 
 		// 5. cleanup: hapus contact sementara (best effort, ignore error)
@@ -668,7 +679,7 @@ func (s *Service) SendTelegramMessageByPhone(ctx context.Context, deviceID uint,
 	})
 }
 
-// ParseWAFormat convert WA-style markdown (*bold*, _italic_, ~strike~, ```mono```)
+// ParseWAFormat convert WA-style markdown (*bold*, _italic_, ~strike~, ```mono```) and [Text](url)
 // jadi plain text + Telegram entities (offset/length dalam UTF-16 code units).
 // Catatan: gak support nested marker, dan marker yang gak ketutup bakal hilang (silently stripped).
 func parseWAFormat(input string) (string, []tg.MessageEntityClass) {
@@ -692,6 +703,45 @@ func parseWAFormat(input string) (string, []tg.MessageEntityClass) {
 
 	i := 0
 	for i < len(runes) {
+		// [Text](url) markdown link
+		if runes[i] == '[' {
+			closeBracket := -1
+			for j := i + 1; j < len(runes); j++ {
+				if runes[j] == ']' {
+					closeBracket = j
+					break
+				}
+			}
+			if closeBracket != -1 && closeBracket+1 < len(runes) && runes[closeBracket+1] == '(' {
+				closeParen := -1
+				for k := closeBracket + 2; k < len(runes); k++ {
+					if runes[k] == ')' {
+						closeParen = k
+						break
+					}
+				}
+				if closeParen != -1 {
+					linkText := string(runes[i+1 : closeBracket])
+					linkURL := string(runes[closeBracket+2 : closeParen])
+
+					start := pos
+					length := 0
+					for _, r := range []rune(linkText) {
+						out = append(out, r)
+						length += utf16Len(r)
+					}
+					entities = append(entities, &tg.MessageEntityTextURL{
+						Offset: start,
+						Length: length,
+						URL:    linkURL,
+					})
+					pos += length
+					i = closeParen + 1
+					continue
+				}
+			}
+		}
+
 		// triple backtick block (mono)
 		if runes[i] == '`' && i+2 < len(runes) && runes[i+1] == '`' && runes[i+2] == '`' {
 			end := -1
@@ -748,7 +798,7 @@ func parseWAFormat(input string) (string, []tg.MessageEntityClass) {
 }
 
 // SendTelegramMediaByPhone — sama tapi kirim media
-func (s *Service) SendTelegramMediaByPhone(ctx context.Context, deviceID uint, phone string, data io.Reader, filename, mtype, caption string) error {
+func (s *Service) SendTelegramMediaByPhone(ctx context.Context, deviceID uint, phone string, data io.Reader, filename, mtype, caption string, replyMarkup tg.ReplyMarkupClass) error {
 	return s.Run(ctx, deviceID, func(ctx context.Context, client *telegram.Client, api *tg.Client) error {
 		if !strings.HasPrefix(phone, "+") {
 			phone = "+" + phone
@@ -805,7 +855,7 @@ func (s *Service) SendTelegramMediaByPhone(ctx context.Context, deviceID uint, p
 					&tg.DocumentAttributeFilename{FileName: filename},
 				},
 			}
-		default:
+		default: // document
 			inputMedia = &tg.InputMediaUploadedDocument{
 				File:       upload,
 				MimeType:   utils.MimeByExt(filename),
@@ -817,11 +867,15 @@ func (s *Service) SendTelegramMediaByPhone(ctx context.Context, deviceID uint, p
 		_, _ = rand.Read(b[:])
 		randomID := int64(binary.BigEndian.Uint64(b[:]))
 
+		caption, entities := parseWAFormat(caption)
+
 		_, sendErr := api.MessagesSendMedia(ctx, &tg.MessagesSendMediaRequest{
-			Peer:     &tg.InputPeerUser{UserID: target.ID, AccessHash: target.AccessHash},
-			Media:    inputMedia,
-			Message:  caption,
-			RandomID: randomID,
+			Peer:        &tg.InputPeerUser{UserID: target.ID, AccessHash: target.AccessHash},
+			Media:       inputMedia,
+			Message:     caption,
+			RandomID:    randomID,
+			Entities:    entities,
+			ReplyMarkup: replyMarkup,
 		})
 
 		_, _ = api.ContactsDeleteContacts(ctx, []tg.InputUserClass{
@@ -833,13 +887,10 @@ func (s *Service) SendTelegramMediaByPhone(ctx context.Context, deviceID uint, p
 }
 
 func (s *Service) DownloadMedia(ctx context.Context, deviceID uint, peerType string, peerID int64, accessHash int64, msgID int, w io.Writer) error {
-	// Buat client baru tapi bypass waiter dengan SimpleWaiter
-	// karena s.waiter.Run() lifecycle tidak compatible dengan on-demand HTTP handler
 	client := telegram.NewClient(s.cfg.AppID, s.cfg.AppHash, telegram.Options{
 		SessionStorage: NewDeviceSessionStorage(s.db, deviceID),
 		Middlewares: []telegram.Middleware{
 			ratelimit.New(rate.Every(100*time.Millisecond), 5),
-			// tidak pakai s.waiter di sini
 		},
 	})
 
@@ -937,3 +988,481 @@ func (s *Service) DownloadMedia(ctx context.Context, deviceID uint, peerType str
 		return fmt.Errorf("message %d not found", msgID)
 	})
 }
+
+// ConnectBot menghubungkan Telegram Bot Token melalui MTProto gotd
+func (s *Service) ConnectBot(ctx context.Context, deviceID uint, botToken string) (*tg.User, error) {
+	botToken = strings.TrimSpace(botToken)
+	if botToken == "" {
+		return nil, fmt.Errorf("bot token tidak boleh kosong")
+	}
+
+	storage := NewDeviceBotSessionStorage(s.db, deviceID)
+	client := telegram.NewClient(s.cfg.AppID, s.cfg.AppHash, telegram.Options{
+		SessionStorage: storage,
+		Middlewares: []telegram.Middleware{
+			ratelimit.New(rate.Every(100*time.Millisecond), 5),
+		},
+	})
+
+	var botUser *tg.User
+	err := client.Run(ctx, func(ctx context.Context) error {
+		// Login as bot via MTProto
+		_, err := client.Auth().Bot(ctx, botToken)
+		if err != nil {
+			return fmt.Errorf("gagal menghubungkan bot token ke MTProto: %w", err)
+		}
+
+		user, err := client.Self(ctx)
+		if err != nil {
+			return fmt.Errorf("gagal mengambil profil bot: %w", err)
+		}
+		botUser = user
+		return nil
+	})
+	if err != nil {
+		s.logs.Write("error", "bot.connect", err.Error(), &deviceID)
+		return nil, err
+	}
+
+	sessionData, _ := storage.LoadSession(ctx)
+	if err := s.devices.UpdateBot(deviceID, botToken, botUser.Username, botUser.FirstName, botUser.ID, true, sessionData); err != nil {
+		return nil, err
+	}
+
+	s.logs.Write("info", "bot.connected", fmt.Sprintf("Bot MTProto terhubung: @%s (ID: %d)", botUser.Username, botUser.ID), &deviceID)
+	s.webhook.RestartDevice(deviceID)
+
+	return botUser, nil
+}
+
+// DisconnectBot memutuskan dan menghapus sesi Telegram Bot dari Device
+func (s *Service) DisconnectBot(ctx context.Context, deviceID uint) error {
+	if err := s.devices.ClearBot(deviceID); err != nil {
+		return err
+	}
+	s.logs.Write("info", "bot.disconnected", "Bot MTProto diputuskan", &deviceID)
+	s.webhook.RestartDevice(deviceID)
+	return nil
+}
+
+// ToggleBot mengaktifkan atau menonaktifkan Bot MTProto
+func (s *Service) ToggleBot(ctx context.Context, deviceID uint, enabled bool) error {
+	if err := s.devices.ToggleBot(deviceID, enabled); err != nil {
+		return err
+	}
+	s.logs.Write("info", "bot.toggle", fmt.Sprintf("Status Bot MTProto diubah menjadi: %t", enabled), &deviceID)
+	s.webhook.RestartDevice(deviceID)
+	return nil
+}
+
+type BotCommandItem struct {
+	Command     string `json:"command"`
+	Description string `json:"description"`
+}
+
+// GetBotCommands mengambil daftar bot commands langsung dari server Telegram MTProto
+func (s *Service) GetBotCommands(ctx context.Context, deviceID uint) ([]BotCommandItem, error) {
+	storage := NewDeviceBotSessionStorage(s.db, deviceID)
+	client := telegram.NewClient(s.cfg.AppID, s.cfg.AppHash, telegram.Options{
+		SessionStorage: storage,
+		Middlewares: []telegram.Middleware{
+			ratelimit.New(rate.Every(100*time.Millisecond), 5),
+		},
+	})
+
+	var items []BotCommandItem
+	err := client.Run(ctx, func(ctx context.Context) error {
+		cmds, err := client.API().BotsGetBotCommands(ctx, &tg.BotsGetBotCommandsRequest{
+			Scope:    &tg.BotCommandScopeDefault{},
+			LangCode: "",
+		})
+		if err != nil {
+			return err
+		}
+
+		for _, c := range cmds {
+			items = append(items, BotCommandItem{
+				Command:     c.Command,
+				Description: c.Description,
+			})
+		}
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	return items, nil
+}
+
+// SetBotCommands mengatur daftar bot commands di server Telegram MTProto
+func (s *Service) SetBotCommands(ctx context.Context, deviceID uint, commands []BotCommandItem) error {
+	storage := NewDeviceBotSessionStorage(s.db, deviceID)
+	client := telegram.NewClient(s.cfg.AppID, s.cfg.AppHash, telegram.Options{
+		SessionStorage: storage,
+		Middlewares: []telegram.Middleware{
+			ratelimit.New(rate.Every(100*time.Millisecond), 5),
+		},
+	})
+
+	var tgCmds []tg.BotCommand
+	for _, c := range commands {
+		cmd := strings.TrimPrefix(strings.TrimSpace(c.Command), "/")
+		desc := strings.TrimSpace(c.Description)
+		if cmd == "" || desc == "" {
+			continue
+		}
+		tgCmds = append(tgCmds, tg.BotCommand{
+			Command:     cmd,
+			Description: desc,
+		})
+	}
+
+	err := client.Run(ctx, func(ctx context.Context) error {
+		_, err := client.API().BotsSetBotCommands(ctx, &tg.BotsSetBotCommandsRequest{
+			Scope:    &tg.BotCommandScopeDefault{},
+			LangCode: "",
+		})
+		return err
+	})
+	if err != nil {
+		s.logs.Write("error", "bot.set_commands", err.Error(), &deviceID)
+		return err
+	}
+
+	b, _ := json.Marshal(commands)
+	_ = s.devices.UpdateBotCommands(deviceID, string(b))
+	s.logs.Write("info", "bot.set_commands", fmt.Sprintf("Bot menu commands diperbarui (%d menu)", len(tgCmds)), &deviceID)
+
+	return nil
+}
+
+func (s *Service) botClient(deviceID uint) *telegram.Client {
+	return telegram.NewClient(s.cfg.AppID, s.cfg.AppHash, telegram.Options{
+		SessionStorage: NewDeviceBotSessionStorage(s.db, deviceID),
+		Middlewares: []telegram.Middleware{
+			ratelimit.New(rate.Every(100*time.Millisecond), 5),
+		},
+	})
+}
+
+func (s *Service) RunBot(ctx context.Context, deviceID uint, fn func(ctx context.Context, client *telegram.Client, api *tg.Client) error) error {
+	client := s.botClient(deviceID)
+
+	return client.Run(ctx, func(ctx context.Context) error {
+		return fn(ctx, client, client.API())
+	})
+}
+
+func (s *Service) SendBotTelegramMessage(ctx context.Context, deviceID uint, peerType string, peerID int64, accessHash int64, text string, replyMarkup tg.ReplyMarkupClass) error {
+	return s.RunBot(ctx, deviceID, func(ctx context.Context, client *telegram.Client, api *tg.Client) error {
+		var peer tg.InputPeerClass
+		switch peerType {
+		case "user":
+			peer = &tg.InputPeerUser{
+				UserID:     peerID,
+				AccessHash: accessHash,
+			}
+		case "channel":
+			peer = &tg.InputPeerChannel{
+				ChannelID:  peerID,
+				AccessHash: accessHash,
+			}
+		case "chat":
+			peer = &tg.InputPeerChat{
+				ChatID: peerID,
+			}
+		default:
+			return fmt.Errorf("invalid peer type: %s", peerType)
+		}
+
+		var b [8]byte
+		_, _ = rand.Read(b[:])
+		randomID := int64(binary.BigEndian.Uint64(b[:]))
+
+		text, entities := parseWAFormat(text)
+
+		_, err := api.MessagesSendMessage(ctx, &tg.MessagesSendMessageRequest{
+			Peer:        peer,
+			Message:     text,
+			RandomID:    randomID,
+			Entities:    entities,
+			ReplyMarkup: replyMarkup,
+		})
+		return err
+	})
+}
+
+func (s *Service) SendBotTelegramMedia(
+	ctx context.Context,
+	deviceID uint,
+	peerType string,
+	peerID int64,
+	accessHash int64,
+	data io.Reader,
+	filename string,
+	mtype string,
+	caption string,
+	replyMarkup tg.ReplyMarkupClass,
+) error {
+	return s.RunBot(ctx, deviceID, func(ctx context.Context, client *telegram.Client, api *tg.Client) error {
+		var peer tg.InputPeerClass
+		switch peerType {
+		case "user":
+			peer = &tg.InputPeerUser{UserID: peerID, AccessHash: accessHash}
+		case "channel":
+			peer = &tg.InputPeerChannel{ChannelID: peerID, AccessHash: accessHash}
+		case "chat":
+			peer = &tg.InputPeerChat{ChatID: peerID}
+		default:
+			return fmt.Errorf("invalid peer type: %s", peerType)
+		}
+
+		raw, err := io.ReadAll(data)
+		if err != nil {
+			return fmt.Errorf("read media: %w", err)
+		}
+
+		u := uploader.NewUploader(api)
+		upload, err := u.FromBytes(ctx, filename, raw)
+		if err != nil {
+			return fmt.Errorf("upload media: %w", err)
+		}
+
+		var inputMedia tg.InputMediaClass
+		switch mtype {
+		case "photo":
+			inputMedia = &tg.InputMediaUploadedPhoto{
+				File: upload,
+			}
+		case "video":
+			inputMedia = &tg.InputMediaUploadedDocument{
+				File:     upload,
+				MimeType: utils.MimeByExt(filename),
+				Attributes: []tg.DocumentAttributeClass{
+					&tg.DocumentAttributeVideo{
+						SupportsStreaming: true,
+					},
+					&tg.DocumentAttributeFilename{FileName: filename},
+				},
+			}
+		case "audio":
+			inputMedia = &tg.InputMediaUploadedDocument{
+				File:     upload,
+				MimeType: utils.MimeByExt(filename),
+				Attributes: []tg.DocumentAttributeClass{
+					&tg.DocumentAttributeAudio{},
+					&tg.DocumentAttributeFilename{FileName: filename},
+				},
+			}
+		default: // document
+			inputMedia = &tg.InputMediaUploadedDocument{
+				File:     upload,
+				MimeType: utils.MimeByExt(filename),
+				Attributes: []tg.DocumentAttributeClass{
+					&tg.DocumentAttributeFilename{FileName: filename},
+				},
+			}
+		}
+
+		var b [8]byte
+		_, _ = rand.Read(b[:])
+		randomID := int64(binary.BigEndian.Uint64(b[:]))
+
+		caption, entities := parseWAFormat(caption)
+
+		_, err = api.MessagesSendMedia(ctx, &tg.MessagesSendMediaRequest{
+			Peer:        peer,
+			Media:       inputMedia,
+			Message:     caption,
+			RandomID:    randomID,
+			Entities:    entities,
+			ReplyMarkup: replyMarkup,
+		})
+		return err
+	})
+}
+
+func (s *Service) SendBotTelegramMessageByPhone(ctx context.Context, deviceID uint, phone, text string, replyMarkup tg.ReplyMarkupClass) error {
+	return s.RunBot(ctx, deviceID, func(ctx context.Context, client *telegram.Client, api *tg.Client) error {
+		if !strings.HasPrefix(phone, "+") {
+			phone = "+" + phone
+		}
+
+		// 1. Coba cari Telegram User ID dari database DeviceContact
+		var contact models.DeviceContact
+		if err := s.db.Where("phone = ?", phone).Order("id DESC").First(&contact).Error; err == nil && contact.TelegramUserID > 0 {
+			text, entities := parseWAFormat(text)
+			var b [8]byte
+			_, _ = rand.Read(b[:])
+			randomID := int64(binary.BigEndian.Uint64(b[:]))
+
+			_, sendErr := api.MessagesSendMessage(ctx, &tg.MessagesSendMessageRequest{
+				Peer: &tg.InputPeerUser{
+					UserID:     contact.TelegramUserID,
+					AccessHash: 0,
+				},
+				Message:     text,
+				RandomID:    randomID,
+				Entities:    entities,
+				ReplyMarkup: replyMarkup,
+			})
+			if sendErr == nil {
+				return nil
+			}
+		}
+
+		// 2. Jika tidak ada di DB atau gagal, resolve via contacts.ImportContacts
+		imported, err := api.ContactsImportContacts(ctx, []tg.InputPhoneContact{
+			{ClientID: 0, Phone: phone, FirstName: "tmp"},
+		})
+		if err != nil {
+			return fmt.Errorf("resolve phone: %w", err)
+		}
+
+		var target *tg.User
+		for _, uClass := range imported.Users {
+			if u, ok := uClass.(*tg.User); ok {
+				target = u
+				break
+			}
+		}
+		if target == nil {
+			return fmt.Errorf("nomor %s tidak ditemukan di Telegram", phone)
+		}
+
+		text, entities := parseWAFormat(text)
+		var b [8]byte
+		_, _ = rand.Read(b[:])
+		randomID := int64(binary.BigEndian.Uint64(b[:]))
+
+		_, sendErr := api.MessagesSendMessage(ctx, &tg.MessagesSendMessageRequest{
+			Peer: &tg.InputPeerUser{
+				UserID:     target.ID,
+				AccessHash: target.AccessHash,
+			},
+			Message:     text,
+			RandomID:    randomID,
+			Entities:    entities,
+			ReplyMarkup: replyMarkup,
+		})
+
+		_, _ = api.ContactsDeleteContacts(ctx, []tg.InputUserClass{
+			&tg.InputUser{
+				UserID:     target.ID,
+				AccessHash: target.AccessHash,
+			},
+		})
+
+		return sendErr
+	})
+}
+
+func (s *Service) SendBotTelegramMediaByPhone(ctx context.Context, deviceID uint, phone string, data io.Reader, filename, mtype, caption string, replyMarkup tg.ReplyMarkupClass) error {
+	return s.RunBot(ctx, deviceID, func(ctx context.Context, client *telegram.Client, api *tg.Client) error {
+		if !strings.HasPrefix(phone, "+") {
+			phone = "+" + phone
+		}
+
+		var targetPeer tg.InputPeerClass
+		var contact models.DeviceContact
+		if err := s.db.Where("phone = ?", phone).Order("id DESC").First(&contact).Error; err == nil && contact.TelegramUserID > 0 {
+			targetPeer = &tg.InputPeerUser{
+				UserID:     contact.TelegramUserID,
+				AccessHash: 0,
+			}
+		} else {
+			imported, err := api.ContactsImportContacts(ctx, []tg.InputPhoneContact{
+				{ClientID: 0, Phone: phone, FirstName: "tmp"},
+			})
+			if err != nil {
+				return fmt.Errorf("resolve phone: %w", err)
+			}
+
+			var target *tg.User
+			for _, uClass := range imported.Users {
+				if u, ok := uClass.(*tg.User); ok {
+					target = u
+					break
+				}
+			}
+			if target == nil {
+				return fmt.Errorf("nomor %s tidak ditemukan di Telegram", phone)
+			}
+			targetPeer = &tg.InputPeerUser{
+				UserID:     target.ID,
+				AccessHash: target.AccessHash,
+			}
+			defer func() {
+				_, _ = api.ContactsDeleteContacts(ctx, []tg.InputUserClass{
+					&tg.InputUser{
+						UserID:     target.ID,
+						AccessHash: target.AccessHash,
+					},
+				})
+			}()
+		}
+
+		raw, err := io.ReadAll(data)
+		if err != nil {
+			return fmt.Errorf("read media: %w", err)
+		}
+
+		u := uploader.NewUploader(api)
+		upload, err := u.FromBytes(ctx, filename, raw)
+		if err != nil {
+			return fmt.Errorf("upload media: %w", err)
+		}
+
+		var inputMedia tg.InputMediaClass
+		switch mtype {
+		case "photo":
+			inputMedia = &tg.InputMediaUploadedPhoto{File: upload}
+		case "video":
+			inputMedia = &tg.InputMediaUploadedDocument{
+				File:     upload,
+				MimeType: utils.MimeByExt(filename),
+				Attributes: []tg.DocumentAttributeClass{
+					&tg.DocumentAttributeVideo{SupportsStreaming: true},
+					&tg.DocumentAttributeFilename{FileName: filename},
+				},
+			}
+		case "audio":
+			inputMedia = &tg.InputMediaUploadedDocument{
+				File:     upload,
+				MimeType: utils.MimeByExt(filename),
+				Attributes: []tg.DocumentAttributeClass{
+					&tg.DocumentAttributeAudio{},
+					&tg.DocumentAttributeFilename{FileName: filename},
+				},
+			}
+		default:
+			inputMedia = &tg.InputMediaUploadedDocument{
+				File:     upload,
+				MimeType: utils.MimeByExt(filename),
+				Attributes: []tg.DocumentAttributeClass{
+					&tg.DocumentAttributeFilename{FileName: filename},
+				},
+			}
+		}
+
+		var b [8]byte
+		_, _ = rand.Read(b[:])
+		randomID := int64(binary.BigEndian.Uint64(b[:]))
+
+		caption, entities := parseWAFormat(caption)
+
+		_, err = api.MessagesSendMedia(ctx, &tg.MessagesSendMediaRequest{
+			Peer:        targetPeer,
+			Media:       inputMedia,
+			Message:     caption,
+			RandomID:    randomID,
+			Entities:    entities,
+			ReplyMarkup: replyMarkup,
+		})
+		return err
+	})
+}
+
+
+

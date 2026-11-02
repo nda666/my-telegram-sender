@@ -133,7 +133,7 @@ func (h *Handlers) DeviceSendInboxMessage(w http.ResponseWriter, r *http.Request
 		}
 	}
 
-	err = h.Telegram.SendTelegramMessage(r.Context(), id, req.Type, peerID, accessHash, req.Message)
+	err = h.Telegram.SendTelegramMessage(r.Context(), id, req.Type, peerID, accessHash, req.Message, nil)
 	if err != nil {
 		respondJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		return

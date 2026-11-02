@@ -10,10 +10,12 @@ import {
 import {
   ApiOutlined,
   FileTextOutlined,
+  GlobalOutlined,
   KeyOutlined,
   LogoutOutlined,
   MessageOutlined,
   MobileOutlined,
+  RobotOutlined,
   SettingOutlined,
   UserOutlined,
 } from '@ant-design/icons';
@@ -91,10 +93,26 @@ export default function AppLayout({ children }: { children: ReactNode }) {
         key: 'devices-contacts',
         icon: <UserOutlined />,
         label: <Link href={`/devices/${deviceId}/contacts`}>Contacts</Link>,
-      }, {
+      },
+      {
         key: 'devices-session', // Gabungan clean segments: 'devices' + '-' + 'session'
         icon: <KeyOutlined />,
         label: <Link href={`/devices/${deviceId}/session`}>Session</Link>,
+      },
+      {
+        key: 'devices-bot',
+        icon: <RobotOutlined />,
+        label: <Link href={`/devices/${deviceId}/bot`}>Bot</Link>,
+      },
+      {
+        key: 'devices-webhook',
+        icon: <GlobalOutlined />,
+        label: <Link href={`/devices/${deviceId}/webhook`}>Webhook</Link>,
+      },
+      {
+        key: 'devices-logs',
+        icon: <FileTextOutlined />,
+        label: <Link href={`/devices/${deviceId}/logs`}>Logs</Link>,
       },
     ];
   }
