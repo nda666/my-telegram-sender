@@ -10,3 +10,5 @@ build-errors.log
 .vscode
 
 telegram-sender
+telegram-sender.zip
+telegram-sender*.zip
